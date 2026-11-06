@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import Link from "next/link";
+import { PromptToSiteLogo } from "@/components/Logo";
 import {
   Sparkles,
   Smartphone,
@@ -295,17 +296,17 @@ export default function StudioPage() {
       <header className="h-14 bg-white border-b border-slate-200 px-4 flex items-center justify-between z-20 flex-shrink-0 shadow-sm">
         {/* Brand Logo & Tag */}
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center text-white font-black text-lg shadow-md shadow-blue-500/20">
-            P
-          </div>
+          <PromptToSiteLogo className="w-8 h-8" />
           <div>
             <div className="flex items-center gap-2">
-              <span className="font-extrabold text-slate-900 tracking-tight text-base">PromptToSite</span>
-              <span className="text-[10px] bg-blue-50 text-blue-700 font-bold px-2 py-0.5 rounded-full border border-blue-200">
+              <span className="font-extrabold text-slate-900 tracking-tight text-base">
+                Prompt<span className="text-blue-600">ToSite</span>
+              </span>
+              <span className="text-[10px] bg-blue-50 text-blue-700 font-extrabold px-2 py-0.5 rounded-full border border-blue-200">
                 MVP v0.2
               </span>
             </div>
-            <p className="text-[10px] text-slate-400 hidden sm:block">Từ Prompt đến Landing Page thật trong 30 giây</p>
+            <p className="text-[10px] text-slate-400 hidden sm:block">Từ Prompt đến Landing Page chuẩn CRO trong 30 giây</p>
           </div>
         </div>
 

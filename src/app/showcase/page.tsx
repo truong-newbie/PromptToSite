@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
+import { PromptToSiteLogo } from "@/components/Logo";
 import {
   Sparkles,
   Zap,
@@ -44,13 +45,11 @@ export default function ShowcasePage() {
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           {/* Logo & Subtitle */}
           <Link href="/" className="flex items-center gap-3 group">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-600 via-indigo-600 to-blue-500 flex items-center justify-center text-white font-black text-xl shadow-md shadow-blue-500/20 group-hover:scale-105 transition duration-300">
-              P
-            </div>
+            <PromptToSiteLogo className="w-10 h-10" />
             <div>
               <div className="flex items-center gap-2">
                 <span className="font-extrabold text-slate-900 tracking-tight text-lg group-hover:text-blue-600 transition">
-                  PromptToSite
+                  Prompt<span className="text-blue-600">ToSite</span>
                 </span>
                 <span className="text-[10px] bg-blue-100 text-blue-800 font-extrabold px-2.5 py-0.5 rounded-full border border-blue-200">
                   PITCH SHOWCASE 2026
