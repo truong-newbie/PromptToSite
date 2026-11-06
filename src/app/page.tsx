@@ -22,6 +22,8 @@ import {
   Tablet,
   TriangleAlert,
   Users,
+  LogOut,
+  User as UserIcon,
 } from "lucide-react";
 import { PromptToSiteLogo } from "@/components/Logo";
 import { ChatMessage, ChatPanel, GENERATION_STEPS } from "@/components/studio/ChatPanel";
@@ -82,6 +84,7 @@ export default function StudioPage() {
   const [leadAlert, setLeadAlert] = useState<{ lead: LeadSubmission; telegram: boolean } | null>(null);
   const [settings, setSettings] = useState<StudioSettings>({ aiProvider: "mock", apiKey: "", telegramToken: "", telegramChatId: "" });
   const [publish, setPublish] = useState<PublishState | null>(null);
+  const [currentUser, setCurrentUser] = useState<{ fullName: string; email: string } | null>(null);
 
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const hydrated = useRef(false);
@@ -121,6 +124,11 @@ export default function StudioPage() {
     } catch {
       /* bỏ qua dữ liệu lưu hỏng */
     }
+
+    fetch("/api/auth")
+      .then((r) => r.json())
+      .then((d) => d.user && setCurrentUser({ fullName: d.user.fullName, email: d.user.email }))
+      .catch(() => {});
 
     fetch("/api/leads")
       .then((r) => r.json())
@@ -409,6 +417,28 @@ export default function StudioPage() {
             <Globe className="w-3.5 h-3.5" />
             Xuất bản
           </button>
+          {currentUser && (
+            <div className="hidden sm:flex items-center gap-1.5 pl-2 border-l border-slate-200">
+              <Link
+                href="/login"
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-xs font-semibold text-slate-700 transition"
+                title={currentUser.email}
+              >
+                <UserIcon className="w-3.5 h-3.5 text-blue-600" />
+                <span className="max-w-[110px] truncate">{currentUser.fullName}</span>
+              </Link>
+              <button
+                onClick={async () => {
+                  await fetch("/api/auth", { method: "DELETE" });
+                  window.location.href = "/login";
+                }}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition"
+                title="Đăng xuất"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
         </div>
       </header>
 
