@@ -42,3 +42,4 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: err?.message || "Lỗi ghi nhận sự kiện" }, { status: 500, headers: CORS });
   }
 }
+

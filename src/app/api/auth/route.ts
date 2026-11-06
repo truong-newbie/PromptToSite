@@ -7,6 +7,8 @@ import {
 } from "@/lib/auth";
 import { getUserSubscription, PLAN_LIMITS } from "@/lib/store";
 
+export const dynamic = "force-dynamic";
+
 export async function GET() {
   const user = await getCurrentUser();
   if (!user) {
@@ -80,3 +82,4 @@ export async function DELETE() {
   });
   return res;
 }
+

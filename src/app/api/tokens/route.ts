@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { createApiToken, listApiTokens, revokeApiToken } from "@/lib/store";
 
+export const dynamic = "force-dynamic";
+
 export async function GET() {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "Chưa đăng nhập" }, { status: 401 });
@@ -35,3 +37,4 @@ export async function DELETE(req: Request) {
     return NextResponse.json({ error: err?.message || "Không thu hồi được token" }, { status: 500 });
   }
 }
+

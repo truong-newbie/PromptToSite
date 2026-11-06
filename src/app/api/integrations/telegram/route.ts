@@ -3,6 +3,8 @@ import { getCurrentUser } from "@/lib/auth";
 import { decryptSecret, encryptSecret, maskSecret } from "@/lib/crypto";
 import { getProjectIntegration, getSite, saveProjectIntegration } from "@/lib/store";
 
+export const dynamic = "force-dynamic";
+
 export async function GET(req: Request) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "Chưa đăng nhập" }, { status: 401 });
@@ -69,3 +71,4 @@ export async function PUT(req: Request) {
     return NextResponse.json({ error: err?.message || "Không lưu được cấu hình Telegram" }, { status: 400 });
   }
 }
+

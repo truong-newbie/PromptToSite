@@ -4,6 +4,8 @@ import { decryptSecret, encryptSecret, maskSecret } from "@/lib/crypto";
 import { getProjectIntegration, getProjectIntegrations, getSite, saveProjectIntegration } from "@/lib/store";
 import { dispatchLeadWebhook, sendEmailLeadNotification } from "@/lib/notifications";
 
+export const dynamic = "force-dynamic";
+
 export async function GET(req: Request) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "Chưa đăng nhập" }, { status: 401 });
@@ -113,3 +115,4 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: err?.message || "Lỗi gửi thử" }, { status: 500 });
   }
 }
+

@@ -4,6 +4,8 @@ import { createProject, deleteProject, getLeads, listProjects, renameProject } f
 import { IndustryType } from "@/lib/types";
 import { INDUSTRY_PRESETS } from "@/lib/blocks/template-engine";
 
+export const dynamic = "force-dynamic";
+
 export async function GET() {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "Chưa đăng nhập" }, { status: 401 });
@@ -82,3 +84,4 @@ export async function DELETE(req: Request) {
     return NextResponse.json({ error: err?.message || "Không xóa được dự án" }, { status: 500 });
   }
 }
+
