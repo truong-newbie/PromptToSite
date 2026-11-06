@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { SESSION_COOKIE } from "./lib/auth";
 
+const SESSION_COOKIE = "p2s_session";
 const PUBLIC_PATHS = ["/showcase", "/login", "/pricing", "/api/auth", "/api/mcp", "/api/events", "/api/domains/validate-ssl", "/api/billing/webhook"];
 
 function isDemoMode(): boolean {
@@ -45,3 +45,4 @@ export function middleware(req: NextRequest) {
 export const config = {
   matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
 };
+
