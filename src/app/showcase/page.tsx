@@ -522,7 +522,7 @@ export default function ShowcasePage() {
           </div>
 
           <p className="text-xs text-slate-400 pt-6">
-            Dự án được phát triển bởi sinh viên Đỗ Đăng Trường • Đại học Công nghiệp Hà Nội (HaUI) • Tháng 11/2026
+            Đề án đổi mới sáng tạo số • Đại học Công nghiệp Hà Nội (HaUI) • Năm 2026
           </p>
         </div>
       </section>
