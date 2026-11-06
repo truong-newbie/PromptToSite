@@ -28,6 +28,7 @@ import {
   Redo2,
   History,
   FolderKanban,
+  BarChart3,
 } from "lucide-react";
 import { PromptToSiteLogo } from "@/components/Logo";
 import { ChatMessage, ChatPanel, GENERATION_STEPS } from "@/components/studio/ChatPanel";
@@ -36,6 +37,7 @@ import { SettingsPanel, StudioSettings } from "@/components/studio/SettingsPanel
 import { PublishModal, PublishState } from "@/components/studio/PublishModal";
 import { HistoryDrawer, VersionRecord } from "@/components/studio/HistoryDrawer";
 import { ImageModal } from "@/components/studio/ImageModal";
+import { AnalyticsPanel } from "@/components/studio/AnalyticsPanel";
 import {
   COLOR_THEMES,
   ColorTheme,
@@ -47,7 +49,7 @@ import {
 import { IndustryType, LeadSubmission } from "@/lib/types";
 
 type Device = "desktop" | "tablet" | "mobile";
-type Tab = "chat" | "crm" | "settings";
+type Tab = "chat" | "crm" | "analytics" | "settings";
 type ToastState = { text: string; tone: "ok" | "error" } | null;
 
 const DEVICE_WIDTH: Record<Device, string> = { desktop: "100%", tablet: "768px", mobile: "390px" };
@@ -424,6 +426,7 @@ export default function StudioPage() {
   const tabs: { id: Tab; label: string; icon: React.ReactNode; badge?: number }[] = [
     { id: "chat", label: "Trợ lý AI", icon: <MessageSquare className="w-4 h-4" /> },
     { id: "crm", label: "Khách hàng", icon: <Users className="w-4 h-4" />, badge: leads.length },
+    { id: "analytics", label: "Thống kê", icon: <BarChart3 className="w-4 h-4" /> },
     { id: "settings", label: "Cài đặt", icon: <Settings className="w-4 h-4" /> },
   ];
 
@@ -579,6 +582,7 @@ export default function StudioPage() {
               onLeadsChange={setLeads}
             />
           )}
+          {tab === "analytics" && <AnalyticsPanel projectId={projectId} />}
           {tab === "settings" && <SettingsPanel settings={settings} onChange={setSettings} projectId={projectId} />}
         </aside>
 

@@ -14,7 +14,36 @@ export async function GET(_req: Request, { params }: { params: { slug: string } 
   if (!site) {
     return new Response("Không tìm thấy trang này.", { status: 404, headers: { "Content-Type": "text/plain; charset=utf-8" } });
   }
-  return new Response(site.html, {
+
+  // Nhúng đoạn mã thống kê nhẹ (~25 dòng, không dùng cookie) cho trang đã xuất bản (Mục C2)
+  const trackingSnippet = `<script>
+(function(){
+  var slug = ${JSON.stringify(params.slug)};
+  function send(type, label) {
+    try {
+      fetch('/api/events', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ siteSlug: slug, type: type, label: label || '' }),
+        keepalive: true
+      }).catch(function(){});
+    } catch (e) {}
+  }
+  send('pageview', document.title);
+  document.querySelectorAll('a[href="#orderSection"], a[href^="tel:"], button[type="submit"]').forEach(function(el){
+    el.addEventListener('click', function(){
+      send('cta_click', (el.textContent || '').trim().slice(0, 40));
+    });
+  });
+})();
+</script>
+</body>`;
+
+  const htmlWithAnalytics = site.html.includes("</body>")
+    ? site.html.replace("</body>", trackingSnippet)
+    : `${site.html}\n${trackingSnippet}`;
+
+  return new Response(htmlWithAnalytics, {
     headers: {
       "Content-Type": "text/html; charset=utf-8",
       "X-Content-Type-Options": "nosniff",
