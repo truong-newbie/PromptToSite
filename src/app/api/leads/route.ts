@@ -1,108 +1,96 @@
 import { NextResponse } from "next/server";
 import { sendTelegramNotification } from "@/lib/telegram";
-import { LeadSubmission } from "@/lib/types";
-import fs from "fs/promises";
-import path from "path";
+import { addLead, getLeads, getPublished } from "@/lib/store";
 
-// Đường dẫn file lưu trữ bền vững
-const DATA_DIR = path.join(process.cwd(), "data");
-const LEADS_FILE = path.join(DATA_DIR, "leads.json");
-
-// In-memory fallback
-let inMemoryLeads: LeadSubmission[] = [];
-
-// Hàm hỗ trợ đọc danh sách leads bền vững
-async function loadPersistentLeads(): Promise<LeadSubmission[]> {
-  try {
-    const content = await fs.readFile(LEADS_FILE, "utf-8");
-    const parsed = JSON.parse(content);
-    if (Array.isArray(parsed)) {
-      inMemoryLeads = parsed;
-      return parsed;
-    }
-  } catch (err) {
-    // File chưa tồn tại hoặc lỗi đọc file -> dùng in-memory
-  }
-  return inMemoryLeads;
+// Giới hạn tần suất đơn giản theo IP (đủ cho MVP; production nên dùng Redis).
+const hits = new Map<string, number[]>();
+function rateLimited(ip: string): boolean {
+  const now = Date.now();
+  const recent = (hits.get(ip) || []).filter((t) => now - t < 60_000);
+  recent.push(now);
+  hits.set(ip, recent);
+  if (hits.size > 5000) hits.clear();
+  return recent.length > 10;
 }
 
-// Hàm hỗ trợ lưu leads vào file
-async function savePersistentLeads(leads: LeadSubmission[]): Promise<void> {
-  try {
-    await fs.mkdir(DATA_DIR, { recursive: true });
-    await fs.writeFile(LEADS_FILE, JSON.stringify(leads, null, 2), "utf-8");
-  } catch (err) {
-    console.warn("Could not save leads to file system, using in-memory only", err);
-  }
+// Trang xuất bản có thể chạy ở domain khác nên endpoint nhận lead cần CORS. Chỉ áp dụng cho POST.
+const CORS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type",
+};
+
+export async function OPTIONS() {
+  return new NextResponse(null, { status: 204, headers: CORS });
 }
+
+const PHONE_RE = /^(\+84|0)\d{9,10}$/;
 
 export async function POST(req: Request) {
   try {
-    const body = await req.json();
-    const { fullName, phone, note, brandName, botToken, chatId } = body;
-
-    if (!fullName || !phone) {
-      return NextResponse.json(
-        { error: "Vui lòng nhập đầy đủ họ tên và số điện thoại." },
-        { status: 400 }
-      );
+    const ip = req.headers.get("x-forwarded-for")?.split(",")[0].trim() || "local";
+    if (rateLimited(ip)) {
+      return NextResponse.json({ error: "Bạn gửi quá nhanh, vui lòng thử lại sau ít phút." }, { status: 429, headers: CORS });
     }
 
-    const currentLeads = await loadPersistentLeads();
+    const body = await req.json();
+    const fullName = String(body.fullName ?? "").trim().slice(0, 80);
+    const phone = String(body.phone ?? "").replace(/[\s.\-]/g, "");
+    const note = String(body.note ?? "").trim().slice(0, 300);
+    const brandName = String(body.brandName ?? "").trim().slice(0, 80);
 
-    const lead: LeadSubmission = {
-      id: "lead_" + Date.now(),
-      projectName: brandName || "Landing Page Bán Hàng",
-      fullName: fullName.trim(),
-      phone: phone.trim(),
-      note: note ? note.trim() : "",
-      submittedAt: new Date().toLocaleString("vi-VN"),
-    };
+    if (fullName.length < 2) {
+      return NextResponse.json({ error: "Vui lòng nhập họ và tên." }, { status: 400, headers: CORS });
+    }
+    if (!PHONE_RE.test(phone)) {
+      return NextResponse.json({ error: "Số điện thoại không hợp lệ." }, { status: 400, headers: CORS });
+    }
 
-    currentLeads.unshift(lead);
-    inMemoryLeads = currentLeads;
+    // Thông tin Telegram: lấy từ trang đã xuất bản (?site=slug), hoặc do Studio gửi lên khi demo.
+    const siteSlug = new URL(req.url).searchParams.get("site");
+    const published = siteSlug ? await getPublished(siteSlug) : null;
+    const botToken = published?.telegram?.botToken ?? (typeof body.botToken === "string" ? body.botToken : undefined);
+    const chatId = published?.telegram?.chatId ?? (typeof body.chatId === "string" ? body.chatId : undefined);
 
-    // Lưu bền vững ra đĩa
-    await savePersistentLeads(currentLeads);
-
-    // Bắn thông báo Telegram (nếu có cấu hình)
-    const telegramResult = await sendTelegramNotification(lead, botToken, chatId);
-
-    return NextResponse.json({
-      success: true,
-      lead,
-      telegramNotification: telegramResult,
-      totalLeads: currentLeads.length,
+    const lead = await addLead({
+      projectName: brandName || published?.brandName || "Landing Page Bán Hàng",
+      fullName,
+      phone,
+      note,
     });
-  } catch (err: any) {
+
+    const telegramNotification = await sendTelegramNotification(lead, botToken, chatId);
+
     return NextResponse.json(
-      { error: err.message || "Lỗi xử lý Lead" },
-      { status: 500 }
+      { success: true, lead, telegramNotification, totalLeads: (await getLeads()).length },
+      { headers: CORS }
     );
+  } catch (err: any) {
+    return NextResponse.json({ error: err?.message || "Lỗi xử lý Lead" }, { status: 500, headers: CORS });
   }
+}
+
+// Chặn công thức Excel (=, +, -, @) trong ô CSV do khách nhập.
+function csvCell(value: unknown): string {
+  let s = String(value ?? "");
+  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
+  return `"${s.replace(/"/g, '""')}"`;
 }
 
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
-    const exportFormat = searchParams.get("export");
+    const leads = await getLeads();
 
-    const leads = await loadPersistentLeads();
-
-    // Hỗ trợ xuất trực tiếp định dạng CSV tương thích 100% Microsoft Excel tiếng Việt
-    if (exportFormat === "csv") {
-      const bom = "\uFEFF"; // UTF-8 BOM giúp Excel không bị lỗi font Tiếng Việt
-      let csv = `${bom}"STT","Thời Gian Đăng Ký","Họ Và Tên","Số Điện Thoại","Ghi Chú Nhu Cầu","Dự Án / Thương Hiệu"\n`;
-
-      leads.forEach((l, index) => {
-        const cleanName = (l.fullName || "").replace(/"/g, '""');
-        const cleanPhone = (l.phone || "").replace(/"/g, '""');
-        const cleanNote = (l.note || "").replace(/"/g, '""');
-        const cleanProject = (l.projectName || "").replace(/"/g, '""');
-        const cleanTime = (l.submittedAt || "").replace(/"/g, '""');
-
-        csv += `"${index + 1}","${cleanTime}","${cleanName}","'${cleanPhone}","${cleanNote}","${cleanProject}"\n`;
-      });
+    if (searchParams.get("export") === "csv") {
+      const header = ["STT", "Thời Gian Đăng Ký", "Họ Và Tên", "Số Điện Thoại", "Ghi Chú Nhu Cầu", "Dự Án / Thương Hiệu"]
+        .map(csvCell)
+        .join(",");
+      const rows = leads.map((l, i) =>
+        [i + 1, l.submittedAt, l.fullName, `'${l.phone}`, l.note, l.projectName].map(csvCell).join(",")
+      );
+      // BOM UTF-8 giúp Excel hiển thị đúng tiếng Việt.
+      const csv = "﻿" + [header, ...rows].join("\r\n") + "\r\n";
 
       return new NextResponse(csv, {
         status: 200,
@@ -113,15 +101,8 @@ export async function GET(req: Request) {
       });
     }
 
-    return NextResponse.json({
-      success: true,
-      leads,
-      total: leads.length,
-    });
+    return NextResponse.json({ success: true, leads, total: leads.length });
   } catch (err: any) {
-    return NextResponse.json(
-      { error: err.message || "Lỗi lấy danh sách Lead" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: err?.message || "Lỗi lấy danh sách Lead" }, { status: 500 });
   }
 }
