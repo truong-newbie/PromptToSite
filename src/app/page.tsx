@@ -34,6 +34,7 @@ import { LeadsPanel } from "@/components/studio/LeadsPanel";
 import { SettingsPanel, StudioSettings } from "@/components/studio/SettingsPanel";
 import { PublishModal, PublishState } from "@/components/studio/PublishModal";
 import { HistoryDrawer, VersionRecord } from "@/components/studio/HistoryDrawer";
+import { ImageModal } from "@/components/studio/ImageModal";
 import {
   COLOR_THEMES,
   ColorTheme,
@@ -78,6 +79,7 @@ export default function StudioPage() {
   const [undoStack, setUndoStack] = useState<TemplateBlockConfig[]>([]);
   const [redoStack, setRedoStack] = useState<TemplateBlockConfig[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [imageModalOpen, setImageModalOpen] = useState(false);
   // HTML nạp vào iframe. Chỉ đổi khi tạo/tải trang mới, nên sửa trực tiếp không làm iframe tải lại.
   const [previewHtml, setPreviewHtml] = useState<string>(() => generateLandingPageHtml(INDUSTRY_PRESETS.spa));
 
@@ -304,6 +306,10 @@ export default function StudioPage() {
         if (typeof key !== "string" || typeof value !== "string" || !value.trim()) return;
         updateConfigWithHistory((prev) => applyFieldEdit(prev, key, value), false);
         showToast("Đã lưu chỉnh sửa");
+      }
+
+      if (event.data.type === "PROMPTTOSITE_IMAGE_EDIT") {
+        setImageModalOpen(true);
       }
     };
 
@@ -686,6 +692,16 @@ export default function StudioPage() {
       </div>
 
       {publish && <PublishModal state={publish} onClose={() => setPublish(null)} onExportZip={handleExportZip} />}
+      <ImageModal
+        open={imageModalOpen}
+        industry={industry}
+        onClose={() => setImageModalOpen(false)}
+        onSelect={(url) => {
+          updateConfigWithHistory((prev) => applyFieldEdit(prev, "heroImage", url), false);
+          postToPreview({ type: "PROMPTTOSITE_SET_IMAGE", url });
+          showToast("Đã cập nhật ảnh Hero");
+        }}
+      />
       <HistoryDrawer
         projectId={projectId}
         open={historyOpen}

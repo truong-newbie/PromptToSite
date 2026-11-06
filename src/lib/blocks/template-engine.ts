@@ -175,10 +175,13 @@ export function escapeHtml(value: unknown): string {
 
 const HEX_RE = /^#[0-9a-fA-F]{6}$/;
 const safeHex = (v: unknown, fallback: string) => (typeof v === "string" && HEX_RE.test(v.trim()) ? v.trim() : fallback);
-const safeImageUrl = (v: unknown, fallback: string) => (typeof v === "string" && /^https:\/\//i.test(v.trim()) ? v.trim() : fallback);
+const safeImageUrl = (v: unknown, fallback: string) =>
+  typeof v === "string" && (/^https:\/\//i.test(v.trim()) || /^data:image\/(jpeg|png|webp);base64,/i.test(v.trim()) || /^\/uploads\//i.test(v.trim()))
+    ? v.trim()
+    : fallback;
 const telHref = (v: string) => v.replace(/[^\d+]/g, "");
 /** Nhúng giá trị vào <script> an toàn (chặn </script>). */
-const jsLiteral = (v: unknown) => JSON.stringify(v).replace(/</g, "\\u003c").split(String.fromCharCode(0x2028)).join("").split(String.fromCharCode(0x2029)).join("");
+const jsLiteral = (v: unknown) => JSON.stringify(v).replace(/</g, "\\u003c").replace(/|/g, "");
 
 const str = (v: unknown, fallback: string, max = 400) =>
   typeof v === "string" && v.trim() ? v.trim().slice(0, max) : fallback;
@@ -245,6 +248,7 @@ export function applyFieldEdit(cfg: TemplateBlockConfig, key: string, value: str
     case "hotlineFooter": next.hotline = v; return next;
     case "headline": next.headline = v; return next;
     case "subheadline": next.subheadline = v; return next;
+    case "heroImage": next.heroImage = safeImageUrl(v, cfg.heroImage); return next;
   }
 
   const m = key.match(/^(feature-title|feature-desc|price-name|price-desc|price-val|price-orig|testi-comment|testi-name|testi-role)-(\d+)$/);
@@ -371,11 +375,13 @@ export function generateLandingPageHtml(cfg: TemplateBlockConfig, options?: Gene
     body.edit-mode-active .editable-text:focus { outline: 2px solid #1d4ed8; background: rgba(59,130,246,.16); }
     .edit-mode-badge { display: none; }
     body.edit-mode-active .edit-mode-badge { display: flex; }
+    .edit-image-btn { display: none; }
+    body.edit-mode-active .edit-image-btn { display: inline-flex; }
   </style>
 </head>
 <body class="antialiased pb-16 md:pb-0 ${isEditActive ? "edit-mode-active" : ""}">
 
-  <div class="edit-mode-badge fixed bottom-20 md:bottom-5 left-1/2 -translate-x-1/2 z-50 bg-slate-900 text-white text-xs font-semibold px-3.5 py-2 rounded-full shadow-xl items-center gap-2 whitespace-nowrap">
+  <div class="edit-mode-badge fixed top-16 left-1/2 -translate-x-1/2 z-50 bg-slate-900 text-white text-xs font-semibold px-3.5 py-2 rounded-full shadow-xl items-center gap-2 whitespace-nowrap">
     <span class="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
     <span>Chế độ Sửa Nhanh: bấm vào văn bản để chỉnh trực tiếp</span>
   </div>
@@ -432,7 +438,10 @@ export function generateLandingPageHtml(cfg: TemplateBlockConfig, options?: Gene
           <div class="relative mx-auto max-w-md">
             <div class="absolute -inset-3 rounded-[2rem] btn-brand opacity-15 blur-2xl"></div>
             <div class="relative rounded-3xl overflow-hidden shadow-2xl border border-white bg-slate-100 aspect-[4/5] sm:aspect-[5/5]">
-              <img src="${heroImage}" alt="${brand}" referrerpolicy="no-referrer" onerror="this.style.display='none'" class="w-full h-full object-cover">
+              <img id="heroImgEl" data-key="heroImage" src="${heroImage}" alt="${brand}" referrerpolicy="no-referrer" onerror="this.style.display='none'" class="w-full h-full object-cover">
+              <button type="button" id="changeHeroImgBtn" class="edit-image-btn absolute top-4 right-4 z-20 px-3.5 py-2 rounded-xl bg-slate-900/90 hover:bg-blue-600 text-white text-xs font-bold shadow-lg items-center gap-1.5 transition">
+                <span>🖼️</span><span>Đổi ảnh</span>
+              </button>
               <div class="absolute bottom-4 left-4 right-4 bg-white/90 backdrop-blur-md p-4 rounded-2xl border border-white shadow-lg flex items-center gap-3">
                 <div class="w-10 h-10 rounded-xl btn-brand flex items-center justify-center text-lg flex-shrink-0">✓</div>
                 <div>
@@ -599,6 +608,13 @@ export function generateLandingPageHtml(cfg: TemplateBlockConfig, options?: Gene
         });
       });
 
+      var changeHeroBtn = document.getElementById('changeHeroImgBtn');
+      if (changeHeroBtn) {
+        changeHeroBtn.addEventListener('click', function () {
+          window.parent.postMessage({ type: 'PROMPTTOSITE_IMAGE_EDIT', payload: { key: 'heroImage' } }, '*');
+        });
+      }
+
       window.addEventListener('message', function (event) {
         if (event.source !== window.parent || !event.data) return;
         var d = event.data;
@@ -613,6 +629,13 @@ export function generateLandingPageHtml(cfg: TemplateBlockConfig, options?: Gene
         if (d.type === 'PROMPTTOSITE_SET_PALETTE') {
           if (/^#[0-9a-fA-F]{6}$/.test(d.primary)) document.documentElement.style.setProperty('--primary-color', d.primary);
           if (/^#[0-9a-fA-F]{6}$/.test(d.accent)) document.documentElement.style.setProperty('--accent-color', d.accent);
+        }
+        if (d.type === 'PROMPTTOSITE_SET_IMAGE') {
+          var imgEl = document.getElementById('heroImgEl');
+          if (imgEl && typeof d.url === 'string' && d.url) {
+            imgEl.setAttribute('src', d.url);
+            imgEl.style.display = 'block';
+          }
         }
       });
     })();
