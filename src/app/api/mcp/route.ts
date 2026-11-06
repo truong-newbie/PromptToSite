@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 import { INDUSTRY_PRESETS, generateLandingPageHtml, TemplateBlockConfig } from "@/lib/blocks/template-engine";
 import { detectIndustry } from "@/lib/industry";
-import { getLeads, getSite, newSlug, savePublished, setSite, verifyApiToken } from "@/lib/store";
+import { getLeads, getSite, logModerationFlag, newSlug, savePublished, setSite, verifyApiToken } from "@/lib/store";
 import { IndustryType } from "@/lib/types";
 import { getCurrentUser } from "@/lib/auth";
 import { checkRateLimit } from "@/lib/ratelimit";
+import { moderateLandingPage } from "@/lib/moderation";
 
 const PROTOCOL_VERSION = "2024-11-05";
 const SERVER_INFO = { name: "PromptToSite MCP Server", version: "1.2.0" };
@@ -127,6 +128,17 @@ async function callTool(name: string, args: Json, origin: string, userId: string
     case "publish_landing_page": {
       const site = await getSite(projectId, userId);
       const config = site?.config ?? INDUSTRY_PRESETS.spa;
+      const mod = await moderateLandingPage(config);
+      if (!mod.allowed) {
+        await logModerationFlag({
+          projectId: site?.projectId || projectId,
+          userId,
+          reason: mod.reason || "Vi phạm tiêu chuẩn nội dung",
+          matched: mod.matched,
+          snapshot: config as unknown as Record<string, any>,
+        });
+        return text(`Từ chối xuất bản: ${mod.reason}`, true);
+      }
       const slug = newSlug();
       const html = generateLandingPageHtml(config, { leadEndpoint: `/api/leads?site=${slug}` });
       await savePublished({
