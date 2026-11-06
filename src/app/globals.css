@@ -3,29 +3,70 @@
 @tailwind utilities;
 
 :root {
-  --background: #f8fafc;
+  --background: #f4f6fb;
   --foreground: #0f172a;
 }
 
 body {
   color: var(--foreground);
   background: var(--background);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
-/* Custom Scrollbar cho Studio Chat */
+@layer components {
+  /* Nền chấm của vùng xem trước */
+  .canvas-dots {
+    background-color: #eef1f7;
+    background-image: radial-gradient(rgba(100, 116, 139, 0.28) 1px, transparent 1px);
+    background-size: 20px 20px;
+  }
+  .glass {
+    background: rgba(255, 255, 255, 0.8);
+    backdrop-filter: blur(14px) saturate(1.5);
+    -webkit-backdrop-filter: blur(14px) saturate(1.5);
+  }
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-xl bg-gradient-to-br from-blue-600 to-indigo-600 text-white font-semibold shadow-glow transition hover:brightness-110 active:scale-[.98] disabled:opacity-50 disabled:shadow-none disabled:active:scale-100;
+  }
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-xl bg-white text-slate-700 font-semibold ring-1 ring-slate-200 shadow-sm transition hover:bg-slate-50 hover:ring-slate-300 active:scale-[.98];
+  }
+  .field {
+    @apply w-full rounded-xl bg-white px-3.5 py-2.5 text-sm text-slate-800 ring-1 ring-slate-200 placeholder:text-slate-400 transition focus:outline-none focus:ring-2 focus:ring-blue-500;
+  }
+  .skeleton {
+    background: linear-gradient(90deg, #e2e8f0 25%, #f1f5f9 37%, #e2e8f0 63%);
+    background-size: 200% 100%;
+  }
+}
+
+/* Thanh cuộn mảnh */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+}
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
 }
 ::-webkit-scrollbar-track {
-  background: #f1f5f9;
+  background: transparent;
 }
 ::-webkit-scrollbar-thumb {
   background: #cbd5e1;
   border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
 }
 ::-webkit-scrollbar-thumb:hover {
   background: #94a3b8;
+  background-clip: content-box;
 }
 
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

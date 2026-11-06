@@ -1,852 +1,588 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { PromptToSiteLogo } from "@/components/Logo";
-import {
-  Sparkles,
-  Smartphone,
-  Tablet,
-  Monitor,
-  Download,
-  Send,
-  Bell,
-  Settings,
-  ExternalLink,
-  Code2,
-  Users,
-  CheckCircle2,
-  RefreshCw,
-  QrCode,
-  Flame,
-  Globe,
-  ChevronRight,
-  ShieldCheck,
-  Eye,
-  Edit3,
-  Palette,
-  Check,
-  PhoneCall,
-  Save,
-  Server,
-  Zap,
-  Award,
-} from "lucide-react";
 import JSZip from "jszip";
 import { saveAs } from "file-saver";
 import confetti from "canvas-confetti";
 import {
-  INDUSTRY_PRESETS,
+  Award,
+  Bell,
+  Check,
+  CircleCheck,
+  Download,
+  Eye,
+  Globe,
+  Lock,
+  Monitor,
+  MessageSquare,
+  Pencil,
+  Settings,
+  Smartphone,
+  Tablet,
+  TriangleAlert,
+  Users,
+} from "lucide-react";
+import { PromptToSiteLogo } from "@/components/Logo";
+import { ChatMessage, ChatPanel, GENERATION_STEPS } from "@/components/studio/ChatPanel";
+import { LeadsPanel } from "@/components/studio/LeadsPanel";
+import { SettingsPanel, StudioSettings } from "@/components/studio/SettingsPanel";
+import { PublishModal, PublishState } from "@/components/studio/PublishModal";
+import {
   COLOR_THEMES,
   ColorTheme,
-  generateLandingPageHtml,
+  INDUSTRY_PRESETS,
   TemplateBlockConfig,
+  applyFieldEdit,
+  generateLandingPageHtml,
 } from "@/lib/blocks/template-engine";
 import { IndustryType, LeadSubmission } from "@/lib/types";
 
+type Device = "desktop" | "tablet" | "mobile";
+type Tab = "chat" | "crm" | "settings";
+type ToastState = { text: string; tone: "ok" | "error" } | null;
+
+const DEVICE_WIDTH: Record<Device, string> = { desktop: "100%", tablet: "768px", mobile: "390px" };
+const TELEGRAM_STORAGE_KEY = "p2s.telegram";
+
+const WELCOME: ChatMessage = {
+  role: "assistant",
+  text: "Xin chào! Mình là trợ lý của PromptToSite. Bạn muốn tạo landing page cho ngành hay sản phẩm nào? Hãy gõ mô tả, hoặc chọn nhanh một ngành mẫu bên dưới.",
+  time: "Vừa xong",
+};
+
+const clock = () => new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+const slugify = (s: string) =>
+  s
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/đ/gi, "d")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "") || "trangcuaban";
+
 export default function StudioPage() {
-  // Trạng thái preview và responsive
-  const [device, setDevice] = useState<"desktop" | "tablet" | "mobile">("desktop");
-  const [activeTab, setActiveTab] = useState<"chat" | "crm" | "settings">("chat");
+  const [device, setDevice] = useState<Device>("desktop");
+  const [tab, setTab] = useState<Tab>("chat");
+  const [mobileView, setMobileView] = useState<"panel" | "preview">("panel");
 
-  // Dữ liệu trang web hiện tại
-  const [currentIndustry, setCurrentIndustry] = useState<IndustryType>("spa");
-  const [currentConfig, setCurrentConfig] = useState<TemplateBlockConfig>(INDUSTRY_PRESETS.spa);
-  const [htmlContent, setHtmlContent] = useState<string>("");
-  const [isGenerating, setIsGenerating] = useState(false);
+  const [industry, setIndustry] = useState<IndustryType>("spa");
+  const [config, setConfig] = useState<TemplateBlockConfig>(INDUSTRY_PRESETS.spa);
+  // HTML nạp vào iframe. Chỉ đổi khi tạo/tải trang mới, nên sửa trực tiếp không làm iframe tải lại.
+  const [previewHtml, setPreviewHtml] = useState<string>(() => generateLandingPageHtml(INDUSTRY_PRESETS.spa));
 
-  // Chế độ Visual Click-to-Edit & Theme Switcher
-  const [isEditMode, setIsEditMode] = useState<boolean>(false);
-  const [selectedThemeId, setSelectedThemeId] = useState<string>("teal");
-  const [saveStatusToast, setSaveStatusToast] = useState<string | null>(null);
+  const [generating, setGenerating] = useState(false);
+  const [step, setStep] = useState(0);
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [toast, setToast] = useState<ToastState>(null);
+  const [messages, setMessages] = useState<ChatMessage[]>([WELCOME]);
 
-  // Prompt chat
-  const [promptInput, setPromptInput] = useState("");
-  const [chatMessages, setChatMessages] = useState<
-    { role: "user" | "assistant"; text: string; time: string }[]
-  >([
-    {
-      role: "assistant",
-      text: "Xin chào! Tôi là Trợ lý AI của PromptToSite. Bạn muốn tạo một trang Landing Page bán hàng cho ngành nghề hay sản phẩm nào hôm nay? (Hãy thử gõ câu lệnh hoặc bấm chọn các gợi ý bên dưới).",
-      time: "Vừa xong",
-    },
-  ]);
-
-  // CRM Leads
   const [leads, setLeads] = useState<LeadSubmission[]>([]);
-  const [leadSearch, setLeadSearch] = useState<string>("");
-  const [newLeadAlert, setNewLeadAlert] = useState<LeadSubmission | null>(null);
-
-  // Settings: Telegram & API Provider
-  const [telegramToken, setTelegramToken] = useState("");
-  const [telegramChatId, setTelegramChatId] = useState("");
-  const [telegramStatus, setTelegramStatus] = useState<string | null>(null);
-  const [aiProvider, setAiProvider] = useState<string>("mock");
-  const [apiKey, setApiKey] = useState<string>("");
-
-  // Modal QR Code Publish
-  const [showPublishModal, setShowPublishModal] = useState(false);
+  const [leadAlert, setLeadAlert] = useState<{ lead: LeadSubmission; telegram: boolean } | null>(null);
+  const [settings, setSettings] = useState<StudioSettings>({ aiProvider: "mock", apiKey: "", telegramToken: "", telegramChatId: "" });
+  const [publish, setPublish] = useState<PublishState | null>(null);
 
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const hydrated = useRef(false);
+  const knownVersion = useRef(0);
+  const remoteApplied = useRef(false);
+  const toastTimer = useRef<ReturnType<typeof setTimeout>>();
+  const alertTimer = useRef<ReturnType<typeof setTimeout>>();
+  const ownLeadIds = useRef(new Set<string>());
+  const leadsRef = useRef<LeadSubmission[]>([]);
+  const latest = useRef({ settings, config });
+  latest.current = { settings, config };
+  leadsRef.current = leads;
 
-  // Khởi tạo HTML ban đầu & tải danh sách Leads đã lưu
-  useEffect(() => {
-    const initialHtml = generateLandingPageHtml(INDUSTRY_PRESETS.spa, { editMode: false });
-    setHtmlContent(initialHtml);
+  const selectedThemeId = COLOR_THEMES.find((t) => t.primary === config.primaryColorHex)?.id;
 
-    // Tải danh sách leads bền vững từ backend
-    fetch("/api/leads")
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.success && Array.isArray(data.leads)) {
-          setLeads(data.leads);
-        }
-      })
-      .catch(() => {});
+  const showToast = useCallback((text: string, tone: "ok" | "error" = "ok") => {
+    setToast({ text, tone });
+    clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 2600);
   }, []);
 
-  // Lắng nghe sự kiện từ iframe (Bắt Lead & Click-to-Edit)
+  const loadPage = useCallback((cfg: TemplateBlockConfig, ind: IndustryType, html?: string) => {
+    setConfig(cfg);
+    setIndustry(ind);
+    setPreviewHtml(html ?? generateLandingPageHtml(cfg));
+    setIsEditMode(false);
+  }, []);
+
+  // ---------- Nạp dữ liệu ban đầu ----------
   useEffect(() => {
-    const handleMessage = async (event: MessageEvent) => {
-      if (!event.data) return;
+    try {
+      const raw = localStorage.getItem(TELEGRAM_STORAGE_KEY);
+      if (raw) {
+        const t = JSON.parse(raw);
+        setSettings((s) => ({ ...s, telegramToken: String(t.token || ""), telegramChatId: String(t.chatId || "") }));
+      }
+    } catch {
+      /* bỏ qua dữ liệu lưu hỏng */
+    }
 
-      // 1. Nhận Lead mới khi user submit form trong iframe
+    fetch("/api/leads")
+      .then((r) => r.json())
+      .then((d) => d.success && Array.isArray(d.leads) && setLeads(d.leads))
+      .catch(() => {});
+
+    fetch("/api/site")
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.site) {
+          knownVersion.current = d.site.version;
+          remoteApplied.current = true; // đã khớp với máy chủ, không cần đẩy ngược lại
+          loadPage(d.site.config, d.site.industry);
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        hydrated.current = true;
+      });
+  }, [loadPage]);
+
+  useEffect(() => {
+    try {
+      if (settings.telegramToken || settings.telegramChatId) {
+        localStorage.setItem(TELEGRAM_STORAGE_KEY, JSON.stringify({ token: settings.telegramToken, chatId: settings.telegramChatId }));
+      }
+    } catch {
+      /* localStorage bị chặn */
+    }
+  }, [settings.telegramToken, settings.telegramChatId]);
+
+  // ---------- Đồng bộ trang đang soạn lên máy chủ (để MCP đọc được) ----------
+  useEffect(() => {
+    if (!hydrated.current) return;
+    if (remoteApplied.current) {
+      remoteApplied.current = false;
+      return;
+    }
+    const t = setTimeout(() => {
+      fetch("/api/site", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ config, industry }),
+      })
+        .then((r) => r.json())
+        .then((d) => typeof d.version === "number" && (knownVersion.current = d.version))
+        .catch(() => {});
+    }, 600);
+    return () => clearTimeout(t);
+  }, [config, industry]);
+
+  // ---------- Theo dõi thay đổi từ AI Agent (MCP) và lead mới từ trang đã xuất bản ----------
+  useEffect(() => {
+    const poll = async () => {
+      if (document.hidden) return;
+      try {
+        const [siteRes, leadRes] = await Promise.all([
+          fetch("/api/site", { cache: "no-store" }).then((r) => r.json()),
+          fetch("/api/leads", { cache: "no-store" }).then((r) => r.json()),
+        ]);
+
+        const site = siteRes.site;
+        if (site && site.source === "mcp" && site.version > knownVersion.current) {
+          knownVersion.current = site.version;
+          remoteApplied.current = true;
+          loadPage(site.config, site.industry);
+          showToast("AI Agent vừa cập nhật trang qua MCP");
+        }
+
+        if (leadRes.success && Array.isArray(leadRes.leads)) {
+          const known = new Set(leadsRef.current.map((l) => l.id));
+          const fresh: LeadSubmission[] = leadRes.leads.filter((l: LeadSubmission) => !known.has(l.id) && !ownLeadIds.current.has(l.id));
+          if (leadRes.leads.length !== leadsRef.current.length || fresh.length) setLeads(leadRes.leads);
+          if (fresh.length) {
+            setLeadAlert({ lead: fresh[0], telegram: false });
+            confetti({ particleCount: 70, spread: 70, origin: { y: 0.3, x: 0.8 } });
+            clearTimeout(alertTimer.current);
+            alertTimer.current = setTimeout(() => setLeadAlert(null), 6000);
+          }
+        }
+      } catch {
+        /* mất kết nối tạm thời, lần sau thử lại */
+      }
+    };
+    const id = setInterval(poll, 3500);
+    return () => clearInterval(id);
+  }, [loadPage, showToast]);
+
+  // ---------- Nhận sự kiện từ iframe (lead, sửa trực tiếp) ----------
+  useEffect(() => {
+    const onMessage = async (event: MessageEvent) => {
+      if (event.source !== iframeRef.current?.contentWindow || !event.data) return;
+
       if (event.data.type === "PROMPTTOSITE_LEAD_SUBMITTED") {
-        const leadData = event.data.payload;
-        const newLead: LeadSubmission = {
-          id: "lead_" + Date.now(),
-          projectName: leadData.brandName || currentConfig.brandName,
-          fullName: leadData.fullName,
-          phone: leadData.phone,
-          note: leadData.note,
-          submittedAt: new Date().toLocaleTimeString("vi-VN"),
-        };
-
-        setLeads((prev) => [newLead, ...prev]);
-        setNewLeadAlert(newLead);
-
-        confetti({
-          particleCount: 80,
-          spread: 70,
-          origin: { y: 0.6 },
-        });
-
-        // Bắn Telegram thật qua API Backend
+        const { settings: s, config: c } = latest.current;
+        const p = event.data.payload || {};
         try {
-          await fetch("/api/leads", {
+          const res = await fetch("/api/leads", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              ...newLead,
-              botToken: telegramToken,
-              chatId: telegramChatId,
+              fullName: p.fullName,
+              phone: p.phone,
+              note: p.note,
+              brandName: p.brandName || c.brandName,
+              botToken: s.telegramToken,
+              chatId: s.telegramChatId,
             }),
           });
-        } catch (err) {
-          console.error("Lỗi gửi Telegram", err);
+          const data = await res.json();
+          if (!res.ok || !data.success) throw new Error(data.error || "Không lưu được khách hàng");
+
+          ownLeadIds.current.add(data.lead.id);
+          setLeads((prev) => [data.lead, ...prev.filter((l) => l.id !== data.lead.id)]);
+          setLeadAlert({ lead: data.lead, telegram: data.telegramNotification?.success === true });
+          confetti({ particleCount: 80, spread: 70, origin: { y: 0.6 } });
+          clearTimeout(alertTimer.current);
+          alertTimer.current = setTimeout(() => setLeadAlert(null), 6000);
+        } catch (err: any) {
+          showToast(err?.message || "Không lưu được khách hàng", "error");
         }
-
-        setTimeout(() => {
-          setNewLeadAlert(null);
-        }, 6000);
       }
 
-      // 2. Nhận cập nhật văn bản từ Click-to-edit
       if (event.data.type === "PROMPTTOSITE_TEXT_UPDATED") {
-        const { key, value, html } = event.data.payload;
-        if (html) setHtmlContent(html);
-        setSaveStatusToast(`Đã lưu trực tiếp: "${value.slice(0, 20)}..."`);
-        setTimeout(() => setSaveStatusToast(null), 2500);
-      }
-
-      // 3. Nhận đồng bộ toàn bộ HTML
-      if (event.data.type === "PROMPTTOSITE_HTML_STATE") {
-        const { html } = event.data.payload;
-        if (html) setHtmlContent(html);
+        const { key, value } = event.data.payload || {};
+        if (typeof key !== "string" || typeof value !== "string" || !value.trim()) return;
+        setConfig((prev) => applyFieldEdit(prev, key, value));
+        showToast("Đã lưu chỉnh sửa");
       }
     };
 
-    window.addEventListener("message", handleMessage);
-    return () => window.removeEventListener("message", handleMessage);
-  }, [currentConfig, telegramToken, telegramChatId]);
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [showToast]);
 
-  // Bật/Tắt chế độ Visual Click-to-edit
+  // ---------- Hành động ----------
+  const postToPreview = (message: Record<string, unknown>) => iframeRef.current?.contentWindow?.postMessage(message, "*");
+
   const toggleEditMode = () => {
-    const nextMode = !isEditMode;
-    setIsEditMode(nextMode);
-    if (iframeRef.current && iframeRef.current.contentWindow) {
-      iframeRef.current.contentWindow.postMessage(
-        {
-          type: "PROMPTTOSITE_TOGGLE_EDIT_MODE",
-          active: nextMode,
-        },
-        "*"
-      );
-    }
+    const next = !isEditMode;
+    setIsEditMode(next);
+    postToPreview({ type: "PROMPTTOSITE_TOGGLE_EDIT_MODE", active: next });
   };
 
-  // Áp dụng bộ màu Theme mới
-  const handleApplyTheme = (theme: ColorTheme) => {
-    setSelectedThemeId(theme.id);
-    setCurrentConfig((prev) => ({
-      ...prev,
-      primaryColorHex: theme.primary,
-      accentColorHex: theme.accent,
-    }));
-
-    if (iframeRef.current && iframeRef.current.contentWindow) {
-      iframeRef.current.contentWindow.postMessage(
-        {
-          type: "PROMPTTOSITE_SET_PALETTE",
-          primary: theme.primary,
-          accent: theme.accent,
-        },
-        "*"
-      );
-    }
-    setSaveStatusToast(`Đã chuyển theme màu: ${theme.name}`);
-    setTimeout(() => setSaveStatusToast(null), 2000);
+  const applyTheme = (theme: ColorTheme) => {
+    setConfig((prev) => ({ ...prev, primaryColorHex: theme.primary, accentColorHex: theme.accent }));
+    postToPreview({ type: "PROMPTTOSITE_SET_PALETTE", primary: theme.primary, accent: theme.accent });
+    showToast(`Đã đổi sang màu ${theme.name.split(" (")[0]}`);
   };
 
-  // Xử lý tạo trang bằng AI
-  const handleGenerate = async (customPrompt?: string) => {
-    const promptToRun = customPrompt || promptInput;
-    if (!promptToRun.trim()) return;
-
-    setIsGenerating(true);
-    const userTime = new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
-
-    setChatMessages((prev) => [
-      ...prev,
-      { role: "user", text: promptToRun, time: userTime },
-    ]);
-    setPromptInput("");
+  const handleGenerate = async (prompt: string) => {
+    setTab("chat");
+    setMessages((prev) => [...prev, { role: "user", text: prompt, time: clock() }]);
+    setGenerating(true);
+    setStep(0);
+    const ticker = setInterval(() => setStep((s) => Math.min(s + 1, GENERATION_STEPS.length - 1)), 650);
 
     try {
-      const res = await fetch("/api/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          prompt: promptToRun,
-          provider: aiProvider,
-          apiKey: apiKey,
+      const [res] = await Promise.all([
+        fetch("/api/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt, provider: settings.aiProvider, apiKey: settings.apiKey }),
         }),
-      });
-
+        sleep(1100), // đủ thời gian để người dùng thấy các bước xử lý
+      ]);
       const data = await res.json();
-      if (data.success) {
-        setCurrentIndustry(data.industry);
-        setCurrentConfig(data.config);
-        setHtmlContent(data.html);
+      if (!res.ok || !data.success) throw new Error(data.error || "Không tạo được trang");
 
-        // Reset edit mode về off sau khi sinh lại trang
-        setIsEditMode(false);
+      loadPage(data.config, data.industry, data.html);
+      setStep(GENERATION_STEPS.length);
+      setMobileView("preview");
 
-        setChatMessages((prev) => [
-          ...prev,
-          {
-            role: "assistant",
-            text: `✨ Đã sinh trang thành công cho “${data.config.brandName}”!\n• Khối giao diện: Navbar, Hero ưu đãi, 3 Cam kết, Bảng giá & Form thu thập khách hàng.\n• Chuẩn responsive mobile + Form CRM. Bạn có thể bật nút "Sửa Nhanh" phía trên để chỉnh sửa câu chữ trực tiếp!`,
-            time: new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }),
-          },
-        ]);
-
-        confetti({
-          particleCount: 50,
-          spread: 60,
-          origin: { x: 0.7, y: 0.5 },
-        });
-      }
-    } catch (err) {
-      console.error(err);
+      const engine = data.provider === "smart-template-engine" ? "Smart Template Engine" : data.provider;
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          text:
+            `Đã tạo trang cho “${data.config.brandName}” bằng ${engine}.\n` +
+            `• Gồm thanh ưu đãi, hero, 3 lợi thế, bảng giá, đánh giá và form nhận khách.\n` +
+            `• Bấm “Sửa nhanh” phía trên để gõ sửa chữ trực tiếp, hoặc đổi màu thương hiệu bằng các chấm màu.` +
+            (data.fallbackReason ? `\n\nLưu ý: ${data.fallbackReason}` : ""),
+          time: clock(),
+        },
+      ]);
+      confetti({ particleCount: 50, spread: 60, origin: { x: 0.7, y: 0.5 } });
+    } catch (err: any) {
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", text: `Chưa tạo được trang: ${err?.message || "lỗi không xác định"}. Bạn thử lại nhé.`, time: clock() },
+      ]);
     } finally {
-      setIsGenerating(false);
+      clearInterval(ticker);
+      setGenerating(false);
     }
   };
 
-  // Tải trọn bộ mã nguồn (.zip)
   const handleExportZip = async () => {
+    const html = generateLandingPageHtml(config, { leadEndpoint: `${window.location.origin}/api/leads` });
     const zip = new JSZip();
-    zip.file("index.html", htmlContent);
+    zip.file("index.html", html);
     zip.file(
       "README.md",
-      `# Mã Nguồn Landing Page (${currentConfig.brandName})\nĐược xuất bản tự động qua nền tảng PromptToSite AI Platform.\n\n- Mở file index.html trực tiếp trên trình duyệt hoặc upload lên bất kỳ hosting nào (Vercel, Netlify, cPanel).\n- Form đăng ký đã được định tuyến tự động.`
+      `# Mã nguồn Landing Page: ${config.brandName}\n\nTạo bằng PromptToSite.\n\n- Mở index.html trực tiếp, hoặc tải lên bất kỳ hosting nào (Vercel, Netlify, cPanel).\n- Form đăng ký gửi dữ liệu về ${window.location.origin}/api/leads. Nếu bạn tự triển khai, hãy đổi địa chỉ này trong thẻ <script> cuối file.\n`
     );
-    const content = await zip.generateAsync({ type: "blob" });
-    saveAs(content, `LandingPage_${currentConfig.brandName.replace(/\s+/g, "_")}.zip`);
-
-    confetti({ particleCount: 60, spread: 80 });
+    saveAs(await zip.generateAsync({ type: "blob" }), `LandingPage_${slugify(config.brandName)}.zip`);
+    showToast("Đã tải mã nguồn (.zip)");
   };
 
-  // Xuất bản 1-click
-  const handlePublish = () => {
-    setShowPublishModal(true);
-    confetti({
-      particleCount: 100,
-      spread: 90,
-      origin: { y: 0.4 },
-    });
+  const handlePublish = async () => {
+    setPublish({ status: "loading" });
+    try {
+      const res = await fetch("/api/publish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ config, botToken: settings.telegramToken, chatId: settings.telegramChatId }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || "Máy chủ từ chối yêu cầu");
+      setPublish({ status: "done", url: data.url });
+      confetti({ particleCount: 100, spread: 90, origin: { y: 0.4 } });
+    } catch (err: any) {
+      setPublish({ status: "error", message: err?.message || "Vui lòng thử lại." });
+    }
   };
+
+  const brandSlug = useMemo(() => slugify(config.brandName), [config.brandName]);
+
+  const tabs: { id: Tab; label: string; icon: React.ReactNode; badge?: number }[] = [
+    { id: "chat", label: "Trợ lý AI", icon: <MessageSquare className="w-4 h-4" /> },
+    { id: "crm", label: "Khách hàng", icon: <Users className="w-4 h-4" />, badge: leads.length },
+    { id: "settings", label: "Cài đặt", icon: <Settings className="w-4 h-4" /> },
+  ];
+
+  const devices: { id: Device; label: string; icon: React.ReactNode }[] = [
+    { id: "desktop", label: "Máy tính", icon: <Monitor className="w-4 h-4" /> },
+    { id: "tablet", label: "Máy tính bảng", icon: <Tablet className="w-4 h-4" /> },
+    { id: "mobile", label: "Điện thoại", icon: <Smartphone className="w-4 h-4" /> },
+  ];
 
   return (
-    <div className="flex flex-col h-screen bg-slate-100 overflow-hidden text-slate-800">
-      {/* =========================================================================
-          TOP NAVBAR
-      ========================================================================= */}
-      <header className="h-14 bg-white border-b border-slate-200 px-4 flex items-center justify-between z-20 flex-shrink-0 shadow-sm">
-        {/* Brand Logo & Tag */}
-        <div className="flex items-center gap-3">
+    <div className="flex flex-col h-[100dvh] overflow-hidden text-slate-800">
+      {/* ============================ THANH TRÊN ============================ */}
+      <header className="h-14 glass border-b border-slate-200/70 px-3 sm:px-5 flex items-center justify-between gap-3 flex-shrink-0 z-30">
+        <div className="flex items-center gap-2.5 min-w-0">
           <PromptToSiteLogo className="w-8 h-8" />
-          <div>
+          <div className="min-w-0 leading-tight">
             <div className="flex items-center gap-2">
-              <span className="font-extrabold text-slate-900 tracking-tight text-base">
+              <span className="font-extrabold text-slate-900 tracking-tight">
                 Prompt<span className="text-blue-600">ToSite</span>
               </span>
-              <span className="text-[10px] bg-blue-50 text-blue-700 font-extrabold px-2 py-0.5 rounded-full border border-blue-200">
-                MVP v0.2
-              </span>
+              <span className="hidden sm:inline text-[10px] font-bold text-blue-700 bg-blue-50 ring-1 ring-blue-200 px-1.5 py-0.5 rounded-md">MVP</span>
             </div>
-            <p className="text-[10px] text-slate-400 hidden sm:block">Từ Prompt đến Landing Page chuẩn CRO trong 30 giây</p>
+            <p className="text-[10px] text-slate-400 hidden md:block truncate">Từ câu lệnh đến landing page bán hàng trong 30 giây</p>
           </div>
         </div>
 
-        {/* Chuyển đổi kích thước Responsive Preview */}
-        <div className="flex items-center bg-slate-100 p-1 rounded-lg border border-slate-200">
-          <button
-            onClick={() => setDevice("desktop")}
-            className={`p-1.5 rounded-md text-xs font-semibold flex items-center gap-1 transition ${
-              device === "desktop" ? "bg-white text-blue-600 shadow-sm" : "text-slate-500 hover:text-slate-800"
-            }`}
-            title="Xem trên Máy tính"
-          >
-            <Monitor className="w-4 h-4" />
-            <span className="hidden md:inline">Desktop</span>
-          </button>
-          <button
-            onClick={() => setDevice("tablet")}
-            className={`p-1.5 rounded-md text-xs font-semibold flex items-center gap-1 transition ${
-              device === "tablet" ? "bg-white text-blue-600 shadow-sm" : "text-slate-500 hover:text-slate-800"
-            }`}
-            title="Xem trên Máy tính bảng (768px)"
-          >
-            <Tablet className="w-4 h-4" />
-            <span className="hidden md:inline">Tablet</span>
-          </button>
-          <button
-            onClick={() => setDevice("mobile")}
-            className={`p-1.5 rounded-md text-xs font-semibold flex items-center gap-1 transition ${
-              device === "mobile" ? "bg-white text-blue-600 shadow-sm" : "text-slate-500 hover:text-slate-800"
-            }`}
-            title="Xem trên Điện thoại di động (375px)"
-          >
-            <Smartphone className="w-4 h-4" />
-            <span className="hidden md:inline">Mobile</span>
-          </button>
+        <div className="hidden lg:flex items-center gap-0.5 bg-slate-100 p-1 rounded-xl ring-1 ring-slate-200/70" role="tablist" aria-label="Kích thước xem trước">
+          {devices.map((d) => (
+            <button
+              key={d.id}
+              role="tab"
+              aria-selected={device === d.id}
+              onClick={() => setDevice(d.id)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition ${
+                device === d.id ? "bg-white text-blue-600 shadow-sm" : "text-slate-500 hover:text-slate-800"
+              }`}
+            >
+              {d.icon}
+              <span className="hidden xl:inline">{d.label}</span>
+            </button>
+          ))}
         </div>
 
-        {/* Action Buttons: Showcase, Export ZIP & 1-Click Publish */}
         <div className="flex items-center gap-2">
-          <Link
-            href="/showcase"
-            className="px-3 py-1.5 rounded-lg bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-700 text-xs font-bold flex items-center gap-1.5 transition shadow-sm"
-            title="Xem trang giới thiệu đề án & tầm nhìn tương lai dành cho Ban Giám Khảo"
-          >
-            <Award className="w-3.5 h-3.5 text-blue-600" />
-            <span className="hidden sm:inline">Giới Thiệu Đề Án (BGK)</span>
-            <span className="sm:hidden">Đề Án</span>
+          <Link href="/showcase" className="btn-ghost px-3 py-2 text-xs" title="Trang giới thiệu đề án">
+            <Award className="w-3.5 h-3.5 text-amber-500" />
+            <span className="hidden md:inline">Giới thiệu đề án</span>
           </Link>
-
-          <button
-            onClick={handleExportZip}
-            className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold flex items-center gap-1.5 transition shadow-sm"
-          >
+          <button onClick={handleExportZip} className="btn-ghost px-3 py-2 text-xs" title="Tải mã nguồn sạch (.zip)">
             <Download className="w-3.5 h-3.5 text-slate-500" />
-            <span className="hidden sm:inline">Tải ZIP (.zip)</span>
+            <span className="hidden sm:inline">Tải ZIP</span>
           </button>
-
-          <button
-            onClick={handlePublish}
-            className="px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold flex items-center gap-1.5 transition shadow-md shadow-blue-600/20"
-          >
+          <button onClick={handlePublish} className="btn-primary px-3.5 py-2 text-xs">
             <Globe className="w-3.5 h-3.5" />
-            <span>Xuất bản 1-Click</span>
+            Xuất bản
           </button>
         </div>
       </header>
 
-      {/* =========================================================================
-          MAIN BODY: CHAT STUDIO (TRÁI) + LIVE PREVIEW (PHẢI)
-      ========================================================================= */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* ========================= CỘT TRÁI: WORKSPACE & CHAT ========================= */}
-        <aside className="w-full sm:w-[420px] md:w-[460px] bg-white border-r border-slate-200 flex flex-col flex-shrink-0 z-10 shadow-sm">
-          {/* Navigation Tabs */}
-          <div className="flex border-b border-slate-200 bg-slate-50/70 text-xs font-bold">
-            <button
-              onClick={() => setActiveTab("chat")}
-              className={`flex-1 py-3 text-center border-b-2 flex items-center justify-center gap-1.5 transition ${
-                activeTab === "chat"
-                  ? "border-blue-600 text-blue-600 bg-white"
-                  : "border-transparent text-slate-500 hover:text-slate-800"
-              }`}
-            >
-              <Sparkles className="w-3.5 h-3.5 text-blue-600" />
-              <span>Trợ lý AI</span>
-            </button>
-            <button
-              onClick={() => setActiveTab("crm")}
-              className={`flex-1 py-3 text-center border-b-2 flex items-center justify-center gap-1.5 transition relative ${
-                activeTab === "crm"
-                  ? "border-blue-600 text-blue-600 bg-white"
-                  : "border-transparent text-slate-500 hover:text-slate-800"
-              }`}
-            >
-              <Users className="w-3.5 h-3.5" />
-              <span>Khách Hàng (Leads)</span>
-              {leads.length > 0 && (
-                <span className="w-4 h-4 rounded-full bg-emerald-500 text-white text-[10px] font-bold flex items-center justify-center">
-                  {leads.length}
-                </span>
-              )}
-            </button>
-            <button
-              onClick={() => setActiveTab("settings")}
-              className={`flex-1 py-3 text-center border-b-2 flex items-center justify-center gap-1.5 transition ${
-                activeTab === "settings"
-                  ? "border-blue-600 text-blue-600 bg-white"
-                  : "border-transparent text-slate-500 hover:text-slate-800"
-              }`}
-            >
-              <Settings className="w-3.5 h-3.5" />
-              <span>Cài đặt & MCP</span>
-            </button>
-          </div>
+      {/* ============================ THÂN TRANG ============================ */}
+      <div className="flex-1 flex min-h-0">
+        {/* ---------- Cột trái: trợ lý, khách hàng, cài đặt ---------- */}
+        <aside
+          className={`${mobileView === "panel" ? "flex" : "hidden"} lg:flex w-full lg:w-[400px] xl:w-[430px] flex-shrink-0 flex-col bg-white border-r border-slate-200/80 min-h-0`}
+        >
+          <nav className="flex gap-1 p-2 border-b border-slate-100" role="tablist">
+            {tabs.map((t) => (
+              <button
+                key={t.id}
+                role="tab"
+                aria-selected={tab === t.id}
+                onClick={() => setTab(t.id)}
+                className={`flex-1 py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition ${
+                  tab === t.id ? "bg-blue-50 text-blue-700" : "text-slate-500 hover:bg-slate-50 hover:text-slate-800"
+                }`}
+              >
+                {t.icon}
+                {t.label}
+                {t.badge ? (
+                  <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-emerald-500 text-white text-[10px] font-bold flex items-center justify-center">
+                    {t.badge}
+                  </span>
+                ) : null}
+              </button>
+            ))}
+          </nav>
 
-          {/* TAB 1: CHAT AI & PROMPT */}
-          {activeTab === "chat" && (
-            <div className="flex-1 flex flex-col overflow-hidden">
-              {/* Danh sách tin nhắn chat */}
-              <div className="flex-1 p-4 overflow-y-auto space-y-4">
-                {chatMessages.map((msg, idx) => (
-                  <div
-                    key={idx}
-                    className={`flex flex-col ${msg.role === "user" ? "items-end" : "items-start"}`}
-                  >
-                    <div
-                      className={`max-w-[90%] p-3.5 rounded-2xl text-xs leading-relaxed ${
-                        msg.role === "user"
-                          ? "bg-blue-600 text-white rounded-br-none shadow-sm"
-                          : "bg-slate-100 text-slate-800 rounded-bl-none border border-slate-200 whitespace-pre-line"
-                      }`}
-                    >
-                      {msg.text}
-                    </div>
-                    <span className="text-[10px] text-slate-400 mt-1 px-1">{msg.time}</span>
-                  </div>
-                ))}
-
-                {isGenerating && (
-                  <div className="flex items-center gap-2 p-3 bg-blue-50 text-blue-700 text-xs rounded-xl border border-blue-200">
-                    <RefreshCw className="w-4 h-4 animate-spin text-blue-600" />
-                    <span>Đang cấu trúc landing page theo khung CRO & Tailwind... (2-3s)</span>
-                  </div>
-                )}
-              </div>
-
-              {/* Gợi ý Prompt nhanh theo ngành (Tối giản, chuyên nghiệp) */}
-              <div className="p-3 bg-slate-50 border-t border-slate-200">
-                <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                  <span className="w-1.5 h-1.5 rounded-full bg-blue-600"></span>
-                  <span>Ngành Nghề Mẫu (Thử Nghiệm Nhanh):</span>
-                </p>
-                <div className="grid grid-cols-2 gap-2 text-xs">
-                  <button
-                    onClick={() => handleGenerate("Tạo Landing Page cho Viện Thẩm Mỹ Ban Mai, giảm 40%, có form đặt hẹn")}
-                    className="p-2.5 rounded-xl bg-white border border-slate-200 hover:border-blue-500 hover:bg-blue-50/30 text-left transition shadow-[0_1px_2px_rgba(0,0,0,0.03)]"
-                  >
-                    <span className="font-semibold text-slate-900 block text-xs">Thẩm Mỹ & Spa</span>
-                    <span className="text-[10px] text-slate-500 line-clamp-1 mt-0.5">Giảm béo, cam kết văn bản</span>
-                  </button>
-                  <button
-                    onClick={() => handleGenerate("Tạo trang bán cà phê The Mộc rang xay nguyên bản, mua 1 tặng 1")}
-                    className="p-2.5 rounded-xl bg-white border border-slate-200 hover:border-blue-500 hover:bg-blue-50/30 text-left transition shadow-[0_1px_2px_rgba(0,0,0,0.03)]"
-                  >
-                    <span className="font-semibold text-slate-900 block text-xs">Cà Phê Mộc Rang Tay</span>
-                    <span className="text-[10px] text-slate-500 line-clamp-1 mt-0.5">Mua 1 tặng 1 tuần ra mắt</span>
-                  </button>
-                  <button
-                    onClick={() => handleGenerate("Tạo landing page khóa học AI Marketing NextGen, học bổng 50%")}
-                    className="p-2.5 rounded-xl bg-white border border-slate-200 hover:border-blue-500 hover:bg-blue-50/30 text-left transition shadow-[0_1px_2px_rgba(0,0,0,0.03)]"
-                  >
-                    <span className="font-semibold text-slate-900 block text-xs">Đào Tạo Kỹ Năng AI</span>
-                    <span className="text-[10px] text-slate-500 line-clamp-1 mt-0.5">Trợ giá 50%, kèm 1:1</span>
-                  </button>
-                  <button
-                    onClick={() => handleGenerate("Tạo trang bộ sưu tập thời trang nữ L'AURA Boutique, giảm 30%")}
-                    className="p-2.5 rounded-xl bg-white border border-slate-200 hover:border-blue-500 hover:bg-blue-50/30 text-left transition shadow-[0_1px_2px_rgba(0,0,0,0.03)]"
-                  >
-                    <span className="font-semibold text-slate-900 block text-xs">Thời Trang Tối Giản</span>
-                    <span className="text-[10px] text-slate-500 line-clamp-1 mt-0.5">Lụa cao cấp, đổi size 7 ngày</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Khung nhập Prompt */}
-              <div className="p-3 bg-white border-t border-slate-200 flex items-center gap-2">
-                <input
-                  type="text"
-                  value={promptInput}
-                  onChange={(e) => setPromptInput(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && handleGenerate()}
-                  placeholder="Mô tả ý tưởng trang web của bạn..."
-                  className="flex-1 px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs focus:outline-none focus:ring-2 focus:ring-blue-600 bg-slate-50"
-                />
-                <button
-                  onClick={() => handleGenerate()}
-                  disabled={isGenerating || !promptInput.trim()}
-                  className="p-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white transition flex items-center justify-center shadow-md shadow-blue-500/20"
-                >
-                  <Send className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* TAB 2: QUẢN LÝ LEADS (CRM MINI) */}
-          {activeTab === "crm" && (
-            <div className="flex-1 p-4 overflow-y-auto space-y-3">
-              <div className="flex items-center justify-between pb-2 border-b border-slate-200">
-                <h3 className="font-bold text-sm text-slate-800 flex items-center gap-1.5">
-                  <Users className="w-4 h-4 text-emerald-600" />
-                  <span>Danh Sách Khách Hàng (Leads)</span>
-                </h3>
-                <span className="text-xs bg-emerald-50 text-emerald-700 font-bold px-2 py-0.5 rounded-full border border-emerald-200">
-                  {leads.length} khách
-                </span>
-              </div>
-
-              {/* Thanh công cụ: Tìm kiếm & Xuất Excel/CSV */}
-              <div className="flex items-center gap-2">
-                <input
-                  type="text"
-                  placeholder="Tìm theo tên hoặc SĐT..."
-                  value={leadSearch}
-                  onChange={(e) => setLeadSearch(e.target.value)}
-                  className="flex-1 px-3 py-1.5 text-xs border border-slate-200 rounded-lg bg-slate-50 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                />
-                <a
-                  href="/api/leads?export=csv"
-                  download
-                  className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center gap-1 shadow-sm transition"
-                  title="Xuất file Excel / CSV (chuẩn UTF-8 Tiếng Việt)"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  <span>Excel</span>
-                </a>
-              </div>
-
-              {leads.length === 0 ? (
-                <div className="text-center py-12 text-slate-400 space-y-2">
-                  <div className="text-3xl">📭</div>
-                  <p className="text-xs font-medium">Chưa có khách hàng nào điền form.</p>
-                  <p className="text-[11px] text-slate-400 max-w-xs mx-auto">
-                    Hãy thử nhập Tên & Số điện thoại vào Form ở màn hình xem trước bên phải để xem dữ liệu nhảy về đây tức thì!
-                  </p>
-                </div>
-              ) : (
-                leads
-                  .filter(
-                    (l) =>
-                      l.fullName.toLowerCase().includes(leadSearch.toLowerCase()) ||
-                      l.phone.includes(leadSearch) ||
-                      (l.note && l.note.toLowerCase().includes(leadSearch.toLowerCase()))
-                  )
-                  .map((l) => (
-                    <div key={l.id} className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1.5 text-xs shadow-sm">
-                      <div className="flex items-center justify-between font-bold text-slate-900">
-                        <span>👤 {l.fullName}</span>
-                        <span className="text-[10px] text-slate-400 font-normal">{l.submittedAt}</span>
-                      </div>
-                      <div className="text-blue-600 font-mono font-bold flex items-center justify-between">
-                        <span>📞 {l.phone}</span>
-                        <a
-                          href={`tel:${l.phone}`}
-                          className="text-[10px] bg-blue-50 text-blue-700 px-2 py-0.5 rounded border border-blue-200 hover:bg-blue-100 flex items-center gap-1"
-                        >
-                          <PhoneCall className="w-3 h-3" />
-                          <span>Gọi ngay</span>
-                        </a>
-                      </div>
-                      {l.note && <p className="text-slate-600 text-[11px]">📝 {l.note}</p>}
-                    </div>
-                  ))
-              )}
-            </div>
-          )}
-
-          {/* TAB 3: CÀI ĐẶT TELEGRAM BOT & KẾT NỐI MCP */}
-          {activeTab === "settings" && (
-            <div className="flex-1 p-4 overflow-y-auto space-y-4 text-xs">
-              {/* Cấu hình LLM Provider */}
-              <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
-                <h4 className="font-bold text-slate-800 flex items-center gap-1.5">
-                  <Zap className="w-4 h-4 text-amber-500" />
-                  <span>Cấu hình Trí Tuệ Nhân Tạo (BYOK)</span>
-                </h4>
-                <p className="text-[11px] text-slate-500">
-                  Sử dụng Smart Template Engine (mặc định không tốn API key) hoặc kết nối trực tiếp OpenAI / Gemini của bạn:
-                </p>
-                <div className="space-y-2 pt-1">
-                  <div>
-                    <label className="block text-[11px] font-bold text-slate-600 mb-1">Mô hình AI:</label>
-                    <select
-                      value={aiProvider}
-                      onChange={(e) => setAiProvider(e.target.value)}
-                      className="w-full px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-semibold bg-white"
-                    >
-                      <option value="mock">Smart Template Engine (Không cần Key - Tốc độ 100ms)</option>
-                      <option value="gemini">Google Gemini 2.0 Flash (BYOK)</option>
-                      <option value="openai">OpenAI GPT-4o / GPT-4o-mini (BYOK)</option>
-                    </select>
-                  </div>
-                  {aiProvider !== "mock" && (
-                    <div>
-                      <label className="block text-[11px] font-bold text-slate-600 mb-1">API Key của bạn:</label>
-                      <input
-                        type="password"
-                        value={apiKey}
-                        onChange={(e) => setApiKey(e.target.value)}
-                        placeholder="Nhập API key tại đây..."
-                        className="w-full px-3 py-1.5 rounded-lg border border-slate-200 font-mono text-xs bg-white"
-                      />
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Cấu hình Telegram */}
-              <div className="p-3.5 rounded-xl bg-blue-50 border border-blue-200 space-y-2">
-                <h4 className="font-bold text-blue-900 flex items-center gap-1.5">
-                  <Bell className="w-4 h-4 text-blue-600" />
-                  <span>Bắn Thông Báo Khách Về Điện Thoại (Telegram)</span>
-                </h4>
-                <p className="text-[11px] text-blue-800 leading-relaxed">
-                  Để điện thoại bạn reo chuông ngay khi khách bấm submit form:
-                </p>
-                <ol className="list-decimal list-inside text-[11px] text-blue-700 space-y-1">
-                  <li>Mở Telegram, chat với <b>@BotFather</b> để lấy <b>Bot Token</b>.</li>
-                  <li>Chat với <b>@userinfobot</b> để lấy <b>Chat ID</b> của bạn.</li>
-                  <li>Điền vào 2 ô dưới đây:</li>
-                </ol>
-              </div>
-
-              <div className="space-y-3">
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-700 mb-1">Telegram Bot Token:</label>
-                  <input
-                    type="text"
-                    value={telegramToken}
-                    onChange={(e) => setTelegramToken(e.target.value)}
-                    placeholder="Ví dụ: 7123456789:AAHxyz..."
-                    className="w-full px-3 py-2 rounded-lg border border-slate-200 font-mono text-xs focus:ring-2 focus:ring-blue-600"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-700 mb-1">Your Telegram Chat ID:</label>
-                  <input
-                    type="text"
-                    value={telegramChatId}
-                    onChange={(e) => setTelegramChatId(e.target.value)}
-                    placeholder="Ví dụ: 123456789"
-                    className="w-full px-3 py-2 rounded-lg border border-slate-200 font-mono text-xs focus:ring-2 focus:ring-blue-600"
-                  />
-                </div>
-                <button
-                  onClick={() => {
-                    if (telegramToken && telegramChatId) {
-                      setTelegramStatus("Đã lưu cấu hình Telegram thành công!");
-                    } else {
-                      setTelegramStatus("Vui lòng điền đủ Token và Chat ID.");
-                    }
-                  }}
-                  className="w-full py-2 bg-slate-800 hover:bg-slate-900 text-white font-bold rounded-lg transition"
-                >
-                  Lưu Cấu Hình Telegram
-                </button>
-                {telegramStatus && (
-                  <p className="text-[11px] font-bold text-emerald-600 text-center">{telegramStatus}</p>
-                )}
-              </div>
-
-              {/* Thông tin MCP Server */}
-              <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2 pt-3">
-                <h4 className="font-bold text-slate-800 flex items-center gap-1.5">
-                  <Code2 className="w-4 h-4 text-slate-600" />
-                  <span>Chuẩn Kết Nối MCP (Model Context Protocol)</span>
-                </h4>
-                <p className="text-[11px] text-slate-600">
-                  Endpoint dành cho ChatGPT Plus hoặc Claude Desktop kết nối trực tiếp vào Docker Sandbox:
-                </p>
-                <div className="p-2 rounded bg-slate-900 text-emerald-400 font-mono text-[10px] break-all">
-                  http://localhost:3000/api/mcp
-                </div>
-              </div>
-            </div>
-          )}
+          {tab === "chat" && <ChatPanel messages={messages} generating={generating} step={step} onSend={handleGenerate} />}
+          {tab === "crm" && <LeadsPanel leads={leads} />}
+          {tab === "settings" && <SettingsPanel settings={settings} onChange={setSettings} />}
         </aside>
 
-        {/* ========================= CỘT PHẢI: LIVE PREVIEW CANVAS ========================= */}
-        <main className="flex-1 bg-slate-200/80 p-3 md:p-5 flex flex-col items-center justify-start overflow-hidden relative">
-          {/* Thanh công cụ phụ: Visual Click-to-Edit & Palette Switcher */}
+        {/* ---------- Cột phải: xem trước ---------- */}
+        <main className={`${mobileView === "preview" ? "flex" : "hidden"} lg:flex flex-1 min-w-0 canvas-dots p-3 md:p-6 relative`}>
           <div
-            className={`w-full bg-white rounded-t-xl border border-slate-300 border-b-0 divide-y divide-slate-100 text-xs transition-all duration-300 shadow-sm ${
-              device === "mobile" ? "max-w-[390px]" : device === "tablet" ? "max-w-[768px]" : "max-w-full"
-            }`}
+            className="mx-auto w-full h-full flex flex-col rounded-2xl bg-white shadow-float ring-1 ring-slate-300/60 overflow-hidden transition-[max-width] duration-300 ease-out"
+            style={{ maxWidth: DEVICE_WIDTH[device] }}
           >
-            {/* Tầng 1: Giả lập URL trình duyệt */}
-            <div className="px-4 py-2 flex items-center justify-between gap-2">
-              <div className="flex items-center gap-1.5 flex-shrink-0">
-                <span className="w-2.5 h-2.5 rounded-full bg-rose-500"></span>
-                <span className="w-2.5 h-2.5 rounded-full bg-amber-500"></span>
-                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+            {/* Thanh địa chỉ */}
+            <div className="flex items-center gap-3 px-4 py-2.5 bg-slate-50 border-b border-slate-200/80 flex-shrink-0">
+              <div className="hidden sm:flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-full bg-rose-400" />
+                <span className="w-2.5 h-2.5 rounded-full bg-amber-400" />
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-400" />
               </div>
-              <div className="flex-1 max-w-sm mx-auto flex items-center justify-center gap-1.5 bg-slate-100/90 px-3 py-1 rounded-md text-[11px] text-slate-600 font-mono truncate">
-                <span className="text-emerald-600 flex-shrink-0">🔒</span>
-                <span className="truncate">https://{currentConfig.brandName.toLowerCase().replace(/[^a-z0-9]/g, "")}.prompttosite.site</span>
+              <div className="flex-1 min-w-0 flex items-center justify-center gap-1.5 bg-white ring-1 ring-slate-200 rounded-lg px-3 py-1.5 text-[11px] text-slate-500 font-mono">
+                <Lock className="w-3 h-3 text-emerald-600 flex-shrink-0" />
+                <span className="truncate">{brandSlug}.prompttosite.site</span>
               </div>
-              <div className="flex items-center gap-1 text-[10px] text-emerald-600 font-bold uppercase flex-shrink-0">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                <span className="hidden sm:inline">LIVE</span>
-              </div>
+              <span className="hidden sm:flex items-center gap-1 text-[10px] font-bold text-slate-500 uppercase tracking-wide flex-shrink-0">
+                <Eye className="w-3 h-3" />
+                Xem trước
+              </span>
             </div>
 
-            {/* Tầng 2: Controls: Color Palette & Click-to-Edit Button */}
-            <div className="px-4 py-1.5 bg-slate-50/70 flex items-center justify-between gap-2">
-              {/* Palette 6 màu */}
-              <div className="flex items-center gap-1.5" title="Đổi màu sắc thương hiệu">
-                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider hidden sm:inline">Màu Sắc:</span>
-                <div className="flex items-center gap-1 bg-white p-1 rounded-lg border border-slate-200">
-                  {COLOR_THEMES.map((theme) => (
-                    <button
-                      key={theme.id}
-                      onClick={() => handleApplyTheme(theme)}
-                      className={`w-4 h-4 rounded-full ${theme.previewBg} transition-transform hover:scale-125 flex items-center justify-center ${
-                        selectedThemeId === theme.id ? "ring-2 ring-blue-600 ring-offset-1 scale-110" : ""
-                      }`}
-                      title={theme.name}
-                    >
-                      {selectedThemeId === theme.id && <Check className="w-2.5 h-2.5 text-white stroke-[3]" />}
-                    </button>
-                  ))}
+            {/* Thanh công cụ: màu sắc + sửa nhanh */}
+            <div className="flex items-center justify-between gap-3 px-4 py-2 border-b border-slate-100 bg-white flex-shrink-0">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <span className="hidden sm:block text-[11px] font-semibold text-slate-400">Màu thương hiệu</span>
+                <div className="flex items-center gap-1.5" role="radiogroup" aria-label="Màu thương hiệu">
+                  {COLOR_THEMES.map((theme) => {
+                    const active = selectedThemeId === theme.id;
+                    return (
+                      <button
+                        key={theme.id}
+                        role="radio"
+                        aria-checked={active}
+                        aria-label={theme.name}
+                        title={theme.name}
+                        onClick={() => applyTheme(theme)}
+                        className={`w-6 h-6 rounded-full flex items-center justify-center transition hover:scale-110 ${theme.previewBg} ${
+                          active ? "ring-2 ring-offset-2 ring-blue-500" : "ring-1 ring-black/5"
+                        }`}
+                      >
+                        {active && <Check className="w-3 h-3 text-white" strokeWidth={3.5} />}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 
-              {/* Nút Toggle Click-to-Edit */}
               <button
                 onClick={toggleEditMode}
-                className={`px-3 py-1 rounded-lg font-bold text-xs flex items-center gap-1.5 transition shadow-sm ${
-                  isEditMode
-                    ? "bg-amber-500 text-white hover:bg-amber-600 ring-2 ring-amber-300"
-                    : "bg-white text-slate-700 hover:bg-slate-100 border border-slate-200"
+                aria-pressed={isEditMode}
+                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition flex-shrink-0 ${
+                  isEditMode ? "bg-amber-500 text-white shadow-md ring-4 ring-amber-200/70" : "btn-ghost !rounded-xl"
                 }`}
-                title="Bật/Tắt chế độ sửa nhanh văn bản trực tiếp trên trang"
+                title="Bật để gõ sửa chữ trực tiếp trên trang"
               >
-                <Edit3 className="w-3.5 h-3.5" />
-                <span>{isEditMode ? "Đang Sửa Trực Tiếp" : "Sửa Nhanh"}</span>
+                <Pencil className="w-3.5 h-3.5" />
+                {isEditMode ? "Đang sửa trực tiếp" : "Sửa nhanh"}
               </button>
+            </div>
+
+            {/* Khung trang */}
+            <div className="flex-1 relative min-h-0 bg-white">
+              <iframe
+                ref={iframeRef}
+                srcDoc={previewHtml}
+                title="Xem trước landing page"
+                className="w-full h-full border-0"
+                sandbox="allow-scripts allow-forms allow-same-origin"
+              />
+
+              {generating && (
+                <div className="absolute inset-0 bg-white/85 backdrop-blur-sm p-8 space-y-6 animate-pop">
+                  <div className="h-8 w-1/3 rounded-lg skeleton animate-shimmer" />
+                  <div className="space-y-3 pt-6">
+                    <div className="h-10 w-3/4 rounded-lg skeleton animate-shimmer" />
+                    <div className="h-10 w-1/2 rounded-lg skeleton animate-shimmer" />
+                    <div className="h-4 w-2/3 rounded skeleton animate-shimmer mt-4" />
+                    <div className="h-4 w-1/2 rounded skeleton animate-shimmer" />
+                  </div>
+                  <div className="grid grid-cols-3 gap-4 pt-6">
+                    {[0, 1, 2].map((i) => (
+                      <div key={i} className="h-28 rounded-2xl skeleton animate-shimmer" />
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
-          {/* Cửa sổ Iframe hiển thị Landing Page */}
-          <div
-            className={`w-full flex-1 bg-white rounded-b-xl border border-slate-300 shadow-xl overflow-hidden transition-all duration-300 relative ${
-              device === "mobile" ? "max-w-[390px]" : device === "tablet" ? "max-w-[768px]" : "max-w-full"
-            }`}
-          >
-            <iframe
-              ref={iframeRef}
-              srcDoc={htmlContent}
-              title="Landing Page Preview"
-              className="w-full h-full border-0"
-              sandbox="allow-scripts allow-forms allow-same-origin"
-            />
-          </div>
-
-          {/* Toast thông báo lưu nội dung trực quan */}
-          {saveStatusToast && (
-            <div className="absolute bottom-8 right-8 z-50 bg-slate-900/90 backdrop-blur text-white px-4 py-2 rounded-xl text-xs font-semibold shadow-xl border border-slate-700 flex items-center gap-2 animate-in fade-in slide-in-from-bottom-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-              <span>{saveStatusToast}</span>
+          {/* Thông báo nhỏ */}
+          {toast && (
+            <div
+              role="status"
+              className="absolute bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 rounded-full bg-slate-900 text-white pl-3 pr-4 py-2 text-xs font-semibold shadow-float animate-fade-up"
+            >
+              {toast.tone === "ok" ? <CircleCheck className="w-4 h-4 text-emerald-400" /> : <TriangleAlert className="w-4 h-4 text-rose-400" />}
+              {toast.text}
             </div>
           )}
 
-          {/* POPUP BÁO LEAD MỚI THỜI GIAN THỰC */}
-          {newLeadAlert && (
-            <div className="absolute top-8 right-8 z-50 bg-slate-900 text-white p-4 rounded-2xl shadow-2xl border border-emerald-500/40 flex items-start gap-3 animate-bounce">
-              <div className="w-8 h-8 rounded-full bg-emerald-500 flex items-center justify-center text-white font-bold flex-shrink-0">
-                🔔
+          {/* Khách mới */}
+          {leadAlert && (
+            <div className="absolute top-6 right-6 z-40 w-72 rounded-2xl bg-slate-900 text-white p-4 shadow-float ring-1 ring-emerald-400/30 flex gap-3 animate-slide-in">
+              <div className="w-9 h-9 rounded-xl bg-emerald-500 flex items-center justify-center flex-shrink-0">
+                <Bell className="w-4 h-4" />
               </div>
-              <div className="text-xs space-y-1">
-                <p className="font-extrabold text-emerald-400 text-sm">CÓ KHÁCH HÀNG MỚI!</p>
-                <p className="font-semibold text-slate-200">
-                  {newLeadAlert.fullName} • <span className="font-mono text-cyan-400">{newLeadAlert.phone}</span>
+              <div className="min-w-0 text-xs space-y-0.5">
+                <p className="font-extrabold text-emerald-400">Có khách hàng mới</p>
+                <p className="font-semibold truncate">{leadAlert.lead.fullName}</p>
+                <p className="font-mono text-cyan-300">{leadAlert.lead.phone}</p>
+                <p className="text-[10px] text-slate-400 pt-1">
+                  Đã lưu vào CRM{leadAlert.telegram ? " và báo về Telegram" : ". Chưa gửi Telegram (kiểm tra mục Cài đặt)"}.
                 </p>
-                <p className="text-[10px] text-slate-400">Đã lưu vào CRM & Bắn thông báo Telegram tức thì.</p>
               </div>
             </div>
           )}
         </main>
       </div>
 
-      {/* =========================================================================
-          MODAL XUẤT BẢN THỰC TẾ & MÃ QR CODE
-      ========================================================================= */}
-      {showPublishModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl p-6 md:p-8 max-w-md w-full shadow-2xl border border-slate-100 text-center space-y-5 animate-in fade-in zoom-in duration-200">
-            <div className="w-16 h-16 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center text-3xl mx-auto shadow-inner">
-              ✓
-            </div>
-            <div>
-              <h3 className="text-xl font-extrabold text-slate-900">Xuất Bản Thành Công!</h3>
-              <p className="text-xs text-slate-500 mt-1">Trang web của bạn đã được đóng gói và đưa lên mạng Internet với chứng chỉ SSL tự động.</p>
-            </div>
+      {/* Chuyển qua lại giữa trò chuyện và xem trước trên điện thoại */}
+      <div className="lg:hidden grid grid-cols-2 gap-1 p-1.5 bg-white border-t border-slate-200 flex-shrink-0">
+        {(["panel", "preview"] as const).map((v) => (
+          <button
+            key={v}
+            onClick={() => setMobileView(v)}
+            className={`py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition ${
+              mobileView === v ? "bg-blue-50 text-blue-700" : "text-slate-500"
+            }`}
+          >
+            {v === "panel" ? <MessageSquare className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+            {v === "panel" ? "Trợ lý & khách hàng" : "Xem trang"}
+          </button>
+        ))}
+      </div>
 
-            {/* Link & QR Code */}
-            <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-3">
-              <div className="flex items-center justify-center">
-                <img
-                  src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=https://prompttosite.site/demo/${currentIndustry}`}
-                  alt="QR Code Website"
-                  className="w-32 h-32 rounded-lg border border-slate-200 shadow-sm"
-                />
-              </div>
-              <p className="text-[11px] text-slate-600 font-medium">
-                Quét mã QR bằng Camera điện thoại để trải nghiệm trực tiếp trang web!
-              </p>
-              <div className="p-2 rounded bg-white border border-slate-200 text-xs font-mono text-blue-600 break-all select-all">
-                https://prompttosite.site/demo/{currentIndustry}
-              </div>
-            </div>
-
-            <div className="flex gap-3">
-              <button
-                onClick={() => setShowPublishModal(false)}
-                className="flex-1 py-2.5 rounded-xl border border-slate-200 text-slate-700 font-bold text-xs hover:bg-slate-50 transition"
-              >
-                Đóng
-              </button>
-              <button
-                onClick={handleExportZip}
-                className="flex-1 py-2.5 rounded-xl bg-blue-600 text-white font-bold text-xs hover:bg-blue-700 transition flex items-center justify-center gap-1.5 shadow-md shadow-blue-500/20"
-              >
-                <Download className="w-3.5 h-3.5" />
-                <span>Tải Mã Nguồn (.zip)</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {publish && <PublishModal state={publish} onClose={() => setPublish(null)} onExportZip={handleExportZip} />}
     </div>
   );
 }
