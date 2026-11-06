@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { INDUSTRY_PRESETS, generateLandingPageHtml, TemplateBlockConfig } from "@/lib/blocks/template-engine";
+import { INDUSTRY_PRESETS, generateLandingPageHtml, normalizeConfig, TemplateBlockConfig } from "@/lib/blocks/template-engine";
+import { detectIndustry, extractSemanticConfig } from "@/lib/industry";
 import { IndustryType } from "@/lib/types";
 
 const CRO_SYSTEM_PROMPT = `Bạn là một Giám đốc Tối ưu Tỷ lệ Chuyển đổi (CRO Expert) và Chuyên gia Copywriting bán hàng hàng đầu tại Việt Nam.
@@ -13,9 +14,9 @@ Trả về DUY NHẤT một chuỗi JSON hợp lệ (không kèm markdown backti
   "headline": "Tiêu đề Hero đánh trúng nỗi đau hoặc mong muốn tột bậc của khách hàng",
   "subheadline": "Mô tả giải pháp cụ thể, dẫn chứng công nghệ, bằng chứng cam kết",
   "discountText": "Lời kêu gọi khẩn cấp (Ưu đãi giới hạn, giảm % hoặc quà tặng)",
-  "primaryColorHex": "#màu hex chính (ví dụ #0d9488, #4f46e5, #e11d48, #78350f)",
+  "primaryColorHex": "#màu hex chính 6 ký tự (ví dụ #0d9488, #4f46e5, #e11d48, #78350f)",
   "accentColorHex": "#màu hex phụ tạo điểm nhấn CTA",
-  "heroImage": "URL ảnh Unsplash chất lượng cao liên quan đến ngành",
+  "heroImage": "URL https ảnh Unsplash chất lượng cao liên quan đến ngành",
   "hotline": "Số hotline liên hệ (VD: 0988.123.456)",
   "features": [
     { "title": "Lợi thế 1", "desc": "Mô tả chi tiết 1-2 câu", "icon": "emoji đại diện" },
@@ -33,151 +34,93 @@ Trả về DUY NHẤT một chuỗi JSON hợp lệ (không kèm markdown backti
   ]
 }`;
 
-// Trích xuất thông minh khi dùng Smart Semantic Engine (Offline / Fallback)
-function extractSemanticConfig(prompt: string, explicitIndustry?: IndustryType): { industry: IndustryType; config: TemplateBlockConfig } {
-  const lowerPrompt = (prompt || "").toLowerCase();
+const TIMEOUT_MS = 25_000;
 
-  let detectedIndustry: IndustryType = explicitIndustry || "general";
-  if (!explicitIndustry) {
-    if (lowerPrompt.includes("cà phê") || lowerPrompt.includes("cafe") || lowerPrompt.includes("trà") || lowerPrompt.includes("f&b") || lowerPrompt.includes("ăn uống")) {
-      detectedIndustry = "coffee";
-    } else if (lowerPrompt.includes("học") || lowerPrompt.includes("khóa học") || lowerPrompt.includes("tiếng anh") || lowerPrompt.includes("đào tạo") || lowerPrompt.includes("kỹ năng") || lowerPrompt.includes("ai")) {
-      detectedIndustry = "course";
-    } else if (lowerPrompt.includes("thời trang") || lowerPrompt.includes("áo") || lowerPrompt.includes("quần") || lowerPrompt.includes("váy") || lowerPrompt.includes("đầm") || lowerPrompt.includes("túi") || lowerPrompt.includes("boutique")) {
-      detectedIndustry = "fashion";
-    } else if (lowerPrompt.includes("spa") || lowerPrompt.includes("thẩm mỹ") || lowerPrompt.includes("giảm béo") || lowerPrompt.includes("da") || lowerPrompt.includes("nha khoa") || lowerPrompt.includes("mỹ phẩm")) {
-      detectedIndustry = "spa";
-    }
-  }
+async function callGemini(prompt: string, apiKey: string): Promise<unknown> {
+  const res = await fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+    body: JSON.stringify({
+      contents: [{ role: "user", parts: [{ text: `${CRO_SYSTEM_PROMPT}\n\nNgười dùng yêu cầu tạo Landing Page với câu lệnh: "${prompt}"` }] }],
+      generationConfig: { responseMimeType: "application/json", temperature: 0.7 },
+    }),
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+  });
+  if (!res.ok) throw new Error(`Gemini trả về lỗi ${res.status}`);
+  const data = await res.json();
+  const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!text) throw new Error("Gemini không trả về nội dung");
+  return JSON.parse(text);
+}
 
-  const baseConfig: TemplateBlockConfig = { ...INDUSTRY_PRESETS[detectedIndustry] };
-
-  // Trích xuất mức giảm giá
-  const discountMatch = prompt.match(/(\d+%\s*|\d+\s*phần trăm|mua 1 tặng 1|free ship)/i);
-  if (discountMatch) {
-    baseConfig.discountText = `ƯU ĐÃI ĐẶC BIỆT: ${discountMatch[0].toUpperCase()} CHO KHÁCH HÀNG ĐẶT HÔM NAY`;
-  }
-
-  // Trích xuất tên thương hiệu trong ngoặc kép hoặc sau các từ khoá
-  const brandMatch = prompt.match(/“([^”]+)”|"([^"]+)"|cho\s+([A-ZÀ-Ỹ][\w\s&]+?)(?:,|$|\.|\s+giảm)/i);
-  if (brandMatch) {
-    const rawBrand = brandMatch[1] || brandMatch[2] || brandMatch[3];
-    if (rawBrand && rawBrand.trim().length > 2) {
-      baseConfig.brandName = rawBrand.trim();
-    }
-  }
-
-  // Trích xuất số điện thoại
-  const phoneMatch = prompt.match(/(0\d{9,10}|\+84\d{9,10})/);
-  if (phoneMatch) {
-    baseConfig.hotline = phoneMatch[0];
-  }
-
-  return { industry: detectedIndustry, config: baseConfig };
+async function callOpenAI(prompt: string, apiKey: string): Promise<unknown> {
+  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      model: "gpt-4o-mini",
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: CRO_SYSTEM_PROMPT },
+        { role: "user", content: `Tạo Landing Page cho yêu cầu: "${prompt}"` },
+      ],
+      temperature: 0.7,
+    }),
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+  });
+  if (!res.ok) throw new Error(`OpenAI trả về lỗi ${res.status}`);
+  const data = await res.json();
+  const content = data.choices?.[0]?.message?.content;
+  if (!content) throw new Error("OpenAI không trả về nội dung");
+  return JSON.parse(content);
 }
 
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { prompt, industry: explicitIndustry, provider = "mock", apiKey } = body;
+    const prompt = String(body.prompt ?? "").trim().slice(0, 1000);
+    const provider = String(body.provider ?? "mock");
+    const apiKey = typeof body.apiKey === "string" ? body.apiKey.trim() : "";
+    const explicitIndustry = body.industry as IndustryType | undefined;
 
-    let finalConfig: TemplateBlockConfig | null = null;
-    let finalIndustry: IndustryType = "general";
-    let usedProvider = "mock";
+    if (!prompt) {
+      return NextResponse.json({ error: "Vui lòng nhập mô tả trang web." }, { status: 400 });
+    }
 
-    // 1. Thử gọi Gemini API nếu người dùng chọn hoặc cung cấp key
-    if ((provider === "gemini" || apiKey?.startsWith("AIza")) && apiKey) {
+    let config: TemplateBlockConfig | null = null;
+    let industry: IndustryType = "general";
+    let usedProvider = "smart-template-engine";
+    let fallbackReason: string | undefined;
+
+    if ((provider === "gemini" || provider === "openai") && !apiKey) {
+      fallbackReason = "Chưa nhập API key nên đã dùng Smart Template Engine.";
+    } else if (provider === "gemini" || provider === "openai") {
       try {
-        const geminiRes = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              contents: [
-                {
-                  role: "user",
-                  parts: [
-                    { text: `${CRO_SYSTEM_PROMPT}\n\nNgười dùng yêu cầu tạo Landing Page với câu lệnh: "${prompt}"` }
-                  ]
-                }
-              ],
-              generationConfig: {
-                responseMimeType: "application/json",
-                temperature: 0.7,
-              }
-            })
-          }
-        );
-
-        if (geminiRes.ok) {
-          const geminiData = await geminiRes.json();
-          const rawText = geminiData.candidates?.[0]?.content?.parts?.[0]?.text;
-          if (rawText) {
-            finalConfig = JSON.parse(rawText);
-            usedProvider = "gemini-2.0-flash";
-          }
-        }
-      } catch (err) {
-        console.warn("Gemini API call failed, falling back to Semantic Engine", err);
+        const raw = provider === "gemini" ? await callGemini(prompt, apiKey) : await callOpenAI(prompt, apiKey);
+        industry = explicitIndustry && explicitIndustry in INDUSTRY_PRESETS ? explicitIndustry : detectIndustry(prompt);
+        // Lấy preset cùng ngành làm nền: trường LLM bỏ sót hoặc sai kiểu sẽ được thay bằng giá trị an toàn.
+        config = normalizeConfig(raw, INDUSTRY_PRESETS[industry]);
+        usedProvider = provider === "gemini" ? "gemini-2.0-flash" : "gpt-4o-mini";
+      } catch (err: any) {
+        fallbackReason = `${err?.message || "Gọi AI thất bại"}. Đã chuyển sang Smart Template Engine.`;
       }
     }
 
-    // 2. Thử gọi OpenAI API nếu người dùng chọn hoặc cung cấp key
-    if (!finalConfig && (provider === "openai" || apiKey?.startsWith("sk-")) && apiKey) {
-      try {
-        const openaiRes = await fetch("https://api.openai.com/v1/chat/completions", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${apiKey}`
-          },
-          body: JSON.stringify({
-            model: "gpt-4o-mini",
-            response_format: { type: "json_object" },
-            messages: [
-              { role: "system", content: CRO_SYSTEM_PROMPT },
-              { role: "user", content: `Tạo Landing Page cho yêu cầu: "${prompt}"` }
-            ],
-            temperature: 0.7
-          })
-        });
-
-        if (openaiRes.ok) {
-          const openaiData = await openaiRes.json();
-          const content = openaiData.choices?.[0]?.message?.content;
-          if (content) {
-            finalConfig = JSON.parse(content);
-            usedProvider = "gpt-4o-mini";
-          }
-        }
-      } catch (err) {
-        console.warn("OpenAI API call failed, falling back to Semantic Engine", err);
-      }
-    }
-
-    // 3. Fallback mượt mà sang Smart Semantic Engine (Offline-Safe / Zero Cost)
-    if (!finalConfig) {
+    if (!config) {
       const extracted = extractSemanticConfig(prompt, explicitIndustry);
-      finalConfig = extracted.config;
-      finalIndustry = extracted.industry;
-      usedProvider = "smart-template-engine (heuristic)";
+      config = extracted.config;
+      industry = extracted.industry;
     }
-
-    // Sinh HTML hoàn chỉnh
-    const html = generateLandingPageHtml(finalConfig);
 
     return NextResponse.json({
       success: true,
       provider: usedProvider,
-      industry: finalIndustry,
-      config: finalConfig,
-      html,
+      fallbackReason,
+      industry,
+      config,
+      html: generateLandingPageHtml(config),
     });
   } catch (err: any) {
-    return NextResponse.json(
-      { error: err.message || "Lỗi tạo trang bằng AI" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: err?.message || "Lỗi tạo trang bằng AI" }, { status: 500 });
   }
 }
