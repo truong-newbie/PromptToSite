@@ -1,11 +1,23 @@
 import { NextResponse } from "next/server";
 import { INDUSTRY_PRESETS, generateLandingPageHtml, TemplateBlockConfig } from "@/lib/blocks/template-engine";
 import { detectIndustry } from "@/lib/industry";
-import { getLeads, getSite, newSlug, savePublished, setSite } from "@/lib/store";
+import { getLeads, getSite, newSlug, savePublished, setSite, verifyApiToken } from "@/lib/store";
 import { IndustryType } from "@/lib/types";
+import { getCurrentUser } from "@/lib/auth";
 
 const PROTOCOL_VERSION = "2024-11-05";
-const SERVER_INFO = { name: "PromptToSite MCP Server", version: "1.1.0" };
+const SERVER_INFO = { name: "PromptToSite MCP Server", version: "1.2.0" };
+
+// Giới hạn tần suất 60 yêu cầu / phút / token (A3)
+const mcpHits = new Map<string, number[]>();
+function isTokenRateLimited(tokenKey: string): boolean {
+  const now = Date.now();
+  const recent = (mcpHits.get(tokenKey) || []).filter((t) => now - t < 60_000);
+  recent.push(now);
+  mcpHits.set(tokenKey, recent);
+  if (mcpHits.size > 2000) mcpHits.clear();
+  return recent.length > 60;
+}
 
 const EDITABLE_FIELDS = [
   "brandName", "tagline", "headline", "subheadline", "discountText", "hotline", "primaryColorHex", "accentColorHex",
@@ -24,6 +36,7 @@ const MCP_TOOLS = [
         industry: { type: "string", enum: ["spa", "coffee", "course", "fashion", "general"], description: "Ngành nghề (bỏ trống để tự nhận diện)" },
         brandName: { type: "string", description: "Tên thương hiệu (tùy chọn)" },
         discount: { type: "string", description: "Nội dung ưu đãi hoặc % giảm giá (tùy chọn)" },
+        projectId: { type: "string", description: "Mã dự án cần cập nhật (bỏ trống sẽ lấy dự án gần nhất)" },
       },
       required: ["prompt"],
     },
@@ -36,6 +49,7 @@ const MCP_TOOLS = [
       properties: {
         field: { type: "string", enum: [...EDITABLE_FIELDS], description: "Trường cần thay đổi" },
         value: { type: "string", description: "Giá trị mới (màu phải ở dạng #RRGGBB)" },
+        projectId: { type: "string", description: "Mã dự án cần cập nhật (bỏ trống sẽ lấy dự án gần nhất)" },
       },
       required: ["field", "value"],
     },
@@ -43,14 +57,22 @@ const MCP_TOOLS = [
   {
     name: "publish_landing_page",
     description: "Xuất bản trang đang soạn và trả về đường dẫn công khai.",
-    inputSchema: { type: "object", properties: {} },
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: { type: "string", description: "Mã dự án cần xuất bản (tùy chọn)" },
+      },
+    },
   },
   {
     name: "get_crm_leads",
     description: "Lấy danh sách khách hàng tiềm năng (Leads) đã đăng ký qua các Landing Page.",
     inputSchema: {
       type: "object",
-      properties: { limit: { type: "number", description: "Số lead tối đa (mặc định 10)" } },
+      properties: {
+        limit: { type: "number", description: "Số lead tối đa (mặc định 10)" },
+        projectId: { type: "string", description: "Lọc theo mã dự án (tùy chọn)" },
+      },
     },
   },
 ];
@@ -61,7 +83,9 @@ const text = (payload: unknown, isError = false) => ({
   ...(isError ? { isError: true } : {}),
 });
 
-async function callTool(name: string, args: Json, origin: string) {
+async function callTool(name: string, args: Json, origin: string, userId: string) {
+  const projectId = typeof args.projectId === "string" && args.projectId.trim() ? args.projectId.trim() : undefined;
+
   switch (name) {
     case "generate_landing_page": {
       const prompt = String(args.prompt ?? "").slice(0, 1000);
@@ -71,12 +95,13 @@ async function callTool(name: string, args: Json, origin: string) {
       if (typeof args.brandName === "string" && args.brandName.trim()) config.brandName = args.brandName.trim().slice(0, 60);
       if (typeof args.discount === "string" && args.discount.trim()) config.discountText = `Ưu đãi: ${args.discount.trim().slice(0, 120)}`;
 
-      const site = await setSite(config, industry, "mcp");
+      const site = await setSite(config, industry, "mcp", { projectId, userId, promptHistory: prompt });
       return text({
         status: "success",
         message: `Đã tạo Landing Page cho "${config.brandName}". Web Studio sẽ tự cập nhật.`,
         brandName: config.brandName,
         industry,
+        projectId: site.projectId,
         version: site.version,
         previewUrl: `${origin}/preview`,
       });
@@ -91,25 +116,43 @@ async function callTool(name: string, args: Json, origin: string) {
         return text("Màu phải có dạng #RRGGBB, ví dụ #0d9488.", true);
       }
 
-      const current = await getSite();
+      const current = await getSite(projectId, userId);
       const industry = current?.industry ?? "spa";
       const config = { ...(current?.config ?? INDUSTRY_PRESETS.spa), [field]: value.slice(0, 320) } as TemplateBlockConfig;
-      const site = await setSite(config, industry, "mcp");
-      return text({ status: "success", updatedField: field, newValue: config[field], version: site.version, previewUrl: `${origin}/preview` });
+      const site = await setSite(config, industry, "mcp", {
+        projectId: current?.projectId || projectId,
+        userId,
+        promptHistory: `MCP sửa ${field}`,
+      });
+      return text({
+        status: "success",
+        updatedField: field,
+        newValue: config[field],
+        projectId: site.projectId,
+        version: site.version,
+        previewUrl: `${origin}/preview`,
+      });
     }
 
     case "publish_landing_page": {
-      const site = await getSite();
+      const site = await getSite(projectId, userId);
       const config = site?.config ?? INDUSTRY_PRESETS.spa;
       const slug = newSlug();
       const html = generateLandingPageHtml(config, { leadEndpoint: `/api/leads?site=${slug}` });
-      await savePublished({ slug, html, brandName: config.brandName, createdAt: new Date().toISOString() });
-      return text({ status: "success", url: `${origin}/s/${slug}` });
+      await savePublished({
+        slug,
+        projectId: site?.projectId || projectId,
+        userId,
+        html,
+        brandName: config.brandName,
+        createdAt: new Date().toISOString(),
+      });
+      return text({ status: "success", url: `${origin}/s/${slug}`, projectId: site?.projectId });
     }
 
     case "get_crm_leads": {
       const limit = Math.min(100, Math.max(1, Number(args.limit) || 10));
-      const leads = await getLeads();
+      const leads = await getLeads({ projectId, userId });
       return text({ status: "success", total: leads.length, leads: leads.slice(0, limit) });
     }
 
@@ -133,10 +176,39 @@ export async function GET() {
 export async function POST(req: Request) {
   let id: string | number | null = null;
   try {
-    const { jsonrpc = "2.0", id: rid, method, params } = await req.json();
+    const body = await req.json();
+    const { jsonrpc = "2.0", id: rid, method, params } = body;
     id = rid ?? null;
     const reply = (result: unknown) => NextResponse.json({ jsonrpc, id, result });
-    const fail = (code: number, message: string) => NextResponse.json({ jsonrpc, id, error: { code, message } });
+    const fail = (code: number, message: string, status = 200) =>
+      NextResponse.json({ jsonrpc, id, error: { code, message } }, { status });
+
+    // Xác thực Bearer Token (A3)
+    const authHeader = req.headers.get("authorization") || "";
+    const bearer = authHeader.toLowerCase().startsWith("bearer ") ? authHeader.slice(7).trim() : "";
+
+    let userId = "usr_demo";
+    let rateKey = req.headers.get("x-forwarded-for") || "local";
+
+    if (bearer) {
+      const verified = await verifyApiToken(bearer);
+      if (!verified) {
+        return fail(-32001, "Unauthorized: API Token không hợp lệ hoặc đã bị thu hồi.", 401);
+      }
+      userId = verified.userId;
+      rateKey = verified.tokenId;
+    } else {
+      // Nếu không gửi Bearer token, kiểm tra phiên hoặc DEMO_MODE
+      const sessionUser = await getCurrentUser();
+      if (!sessionUser) {
+        return fail(-32001, "Unauthorized: Thiếu header Authorization: Bearer <p2s_token>", 401);
+      }
+      userId = sessionUser.id;
+    }
+
+    if (isTokenRateLimited(rateKey)) {
+      return fail(-32002, "Rate limit exceeded: Tối đa 60 yêu cầu / phút / token.", 429);
+    }
 
     // Thông báo một chiều (không có id) chỉ cần xác nhận đã nhận.
     if (typeof method === "string" && method.startsWith("notifications/")) {
@@ -155,7 +227,7 @@ export async function POST(req: Request) {
       case "resources/list":
         return reply({ resources: [] });
       case "tools/call": {
-        const result = await callTool(String(params?.name), (params?.arguments ?? {}) as Json, new URL(req.url).origin);
+        const result = await callTool(String(params?.name), (params?.arguments ?? {}) as Json, new URL(req.url).origin, userId);
         return result ? reply(result) : fail(-32602, `Không tìm thấy công cụ '${params?.name}'`);
       }
       default:
