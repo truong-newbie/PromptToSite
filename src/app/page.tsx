@@ -24,12 +24,16 @@ import {
   Users,
   LogOut,
   User as UserIcon,
+  Undo2,
+  Redo2,
+  History,
 } from "lucide-react";
 import { PromptToSiteLogo } from "@/components/Logo";
 import { ChatMessage, ChatPanel, GENERATION_STEPS } from "@/components/studio/ChatPanel";
 import { LeadsPanel } from "@/components/studio/LeadsPanel";
 import { SettingsPanel, StudioSettings } from "@/components/studio/SettingsPanel";
 import { PublishModal, PublishState } from "@/components/studio/PublishModal";
+import { HistoryDrawer, VersionRecord } from "@/components/studio/HistoryDrawer";
 import {
   COLOR_THEMES,
   ColorTheme,
@@ -70,6 +74,10 @@ export default function StudioPage() {
 
   const [industry, setIndustry] = useState<IndustryType>("spa");
   const [config, setConfig] = useState<TemplateBlockConfig>(INDUSTRY_PRESETS.spa);
+  const [projectId, setProjectId] = useState<string>("proj_default");
+  const [undoStack, setUndoStack] = useState<TemplateBlockConfig[]>([]);
+  const [redoStack, setRedoStack] = useState<TemplateBlockConfig[]>([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
   // HTML nạp vào iframe. Chỉ đổi khi tạo/tải trang mới, nên sửa trực tiếp không làm iframe tải lại.
   const [previewHtml, setPreviewHtml] = useState<string>(() => generateLandingPageHtml(INDUSTRY_PRESETS.spa));
 
@@ -112,6 +120,63 @@ export default function StudioPage() {
     setIsEditMode(false);
   }, []);
 
+  const updateConfigWithHistory = useCallback((updater: (prev: TemplateBlockConfig) => TemplateBlockConfig, reloadIframe = false) => {
+    setConfig((prev) => {
+      const next = updater(prev);
+      setUndoStack((u) => [...u.slice(-49), prev]);
+      setRedoStack([]);
+      if (reloadIframe) {
+        setPreviewHtml(generateLandingPageHtml(next));
+      }
+      return next;
+    });
+  }, []);
+
+  const handleUndo = useCallback(() => {
+    setUndoStack((u) => {
+      if (u.length === 0) return u;
+      const previous = u[u.length - 1];
+      setConfig((cur) => {
+        setRedoStack((r) => [...r, cur]);
+        setPreviewHtml(generateLandingPageHtml(previous));
+        return previous;
+      });
+      setIsEditMode(false);
+      showToast("Đã hoàn tác (Undo)");
+      return u.slice(0, -1);
+    });
+  }, [showToast]);
+
+  const handleRedo = useCallback(() => {
+    setRedoStack((r) => {
+      if (r.length === 0) return r;
+      const nextCfg = r[r.length - 1];
+      setConfig((cur) => {
+        setUndoStack((u) => [...u, cur]);
+        setPreviewHtml(generateLandingPageHtml(nextCfg));
+        return nextCfg;
+      });
+      setIsEditMode(false);
+      showToast("Đã làm lại (Redo)");
+      return r.slice(0, -1);
+    });
+  }, [showToast]);
+
+  // Phím tắt Ctrl+Z / Ctrl+Shift+Z (ngoài ô nhập liệu) (B1)
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return;
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        if (e.shiftKey) handleRedo();
+        else handleUndo();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [handleUndo, handleRedo]);
+
   // ---------- Nạp dữ liệu ban đầu ----------
   useEffect(() => {
     fetch("/api/auth")
@@ -129,6 +194,7 @@ export default function StudioPage() {
       .then((d) => {
         if (d.site) {
           knownVersion.current = d.site.version;
+          if (d.site.projectId) setProjectId(d.site.projectId);
           remoteApplied.current = true; // đã khớp với máy chủ, không cần đẩy ngược lại
           loadPage(d.site.config, d.site.industry);
         }
@@ -150,14 +216,17 @@ export default function StudioPage() {
       fetch("/api/site", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ config, industry }),
+        body: JSON.stringify({ config, industry, projectId }),
       })
         .then((r) => r.json())
-        .then((d) => typeof d.version === "number" && (knownVersion.current = d.version))
+        .then((d) => {
+          if (typeof d.version === "number") knownVersion.current = d.version;
+          if (typeof d.projectId === "string") setProjectId(d.projectId);
+        })
         .catch(() => {});
     }, 600);
     return () => clearTimeout(t);
-  }, [config, industry]);
+  }, [config, industry, projectId]);
 
   // ---------- Theo dõi thay đổi từ AI Agent (MCP) và lead mới từ trang đã xuất bản ----------
   useEffect(() => {
@@ -233,14 +302,14 @@ export default function StudioPage() {
       if (event.data.type === "PROMPTTOSITE_TEXT_UPDATED") {
         const { key, value } = event.data.payload || {};
         if (typeof key !== "string" || typeof value !== "string" || !value.trim()) return;
-        setConfig((prev) => applyFieldEdit(prev, key, value));
+        updateConfigWithHistory((prev) => applyFieldEdit(prev, key, value), false);
         showToast("Đã lưu chỉnh sửa");
       }
     };
 
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [showToast]);
+  }, [showToast, updateConfigWithHistory]);
 
   // ---------- Hành động ----------
   const postToPreview = (message: Record<string, unknown>) => iframeRef.current?.contentWindow?.postMessage(message, "*");
@@ -252,7 +321,7 @@ export default function StudioPage() {
   };
 
   const applyTheme = (theme: ColorTheme) => {
-    setConfig((prev) => ({ ...prev, primaryColorHex: theme.primary, accentColorHex: theme.accent }));
+    updateConfigWithHistory((prev) => ({ ...prev, primaryColorHex: theme.primary, accentColorHex: theme.accent }), false);
     postToPreview({ type: "PROMPTTOSITE_SET_PALETTE", primary: theme.primary, accent: theme.accent });
     showToast(`Đã đổi sang màu ${theme.name.split(" (")[0]}`);
   };
@@ -450,7 +519,7 @@ export default function StudioPage() {
 
           {tab === "chat" && <ChatPanel messages={messages} generating={generating} step={step} onSend={handleGenerate} />}
           {tab === "crm" && <LeadsPanel leads={leads} />}
-          {tab === "settings" && <SettingsPanel settings={settings} onChange={setSettings} />}
+          {tab === "settings" && <SettingsPanel settings={settings} onChange={setSettings} projectId={projectId} />}
         </aside>
 
         {/* ---------- Cột phải: xem trước ---------- */}
@@ -502,17 +571,43 @@ export default function StudioPage() {
                 </div>
               </div>
 
-              <button
-                onClick={toggleEditMode}
-                aria-pressed={isEditMode}
-                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition flex-shrink-0 ${
-                  isEditMode ? "bg-amber-500 text-white shadow-md ring-4 ring-amber-200/70" : "btn-ghost !rounded-xl"
-                }`}
-                title="Bật để gõ sửa chữ trực tiếp trên trang"
-              >
-                <Pencil className="w-3.5 h-3.5" />
-                {isEditMode ? "Đang sửa trực tiếp" : "Sửa nhanh"}
-              </button>
+              <div className="flex items-center gap-1.5 flex-shrink-0">
+                <button
+                  onClick={handleUndo}
+                  disabled={undoStack.length === 0}
+                  className="btn-ghost px-2.5 py-1.5 text-xs disabled:opacity-40"
+                  title="Hoàn tác (Ctrl+Z)"
+                >
+                  <Undo2 className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  onClick={handleRedo}
+                  disabled={redoStack.length === 0}
+                  className="btn-ghost px-2.5 py-1.5 text-xs disabled:opacity-40"
+                  title="Làm lại (Ctrl+Shift+Z)"
+                >
+                  <Redo2 className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  onClick={() => setHistoryOpen(true)}
+                  className="btn-ghost px-2.5 py-1.5 text-xs"
+                  title="Xem lịch sử phiên bản"
+                >
+                  <History className="w-3.5 h-3.5" />
+                  <span className="hidden md:inline">Lịch sử</span>
+                </button>
+                <button
+                  onClick={toggleEditMode}
+                  aria-pressed={isEditMode}
+                  className={`px-3.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition ${
+                    isEditMode ? "bg-amber-500 text-white shadow-md ring-4 ring-amber-200/70" : "btn-ghost !rounded-xl"
+                  }`}
+                  title="Bật để gõ sửa chữ trực tiếp trên trang"
+                >
+                  <Pencil className="w-3.5 h-3.5" />
+                  {isEditMode ? "Đang sửa trực tiếp" : "Sửa nhanh"}
+                </button>
+              </div>
             </div>
 
             {/* Khung trang */}
@@ -591,6 +686,23 @@ export default function StudioPage() {
       </div>
 
       {publish && <PublishModal state={publish} onClose={() => setPublish(null)} onExportZip={handleExportZip} />}
+      <HistoryDrawer
+        projectId={projectId}
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        onRestore={async (ver: VersionRecord) => {
+          const res = await fetch(`/api/projects/${encodeURIComponent(projectId)}/versions/${encodeURIComponent(ver.id)}/restore`, {
+            method: "POST",
+          });
+          const data = await res.json();
+          if (data.success && data.site) {
+            setUndoStack((u) => [...u, config]);
+            loadPage(data.site.config, data.site.industry);
+            setHistoryOpen(false);
+            showToast(`Đã khôi phục phiên bản #${ver.versionNumber}`);
+          }
+        }}
+      />
     </div>
   );
 }
