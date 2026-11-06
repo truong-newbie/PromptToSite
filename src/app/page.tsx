@@ -698,40 +698,46 @@ export default function StudioPage() {
         <main className="flex-1 bg-slate-200/80 p-3 md:p-5 flex flex-col items-center justify-start overflow-hidden relative">
           {/* Thanh công cụ phụ: Visual Click-to-Edit & Palette Switcher */}
           <div
-            className={`w-full bg-white rounded-t-xl border border-slate-300 border-b-0 px-4 py-2 flex flex-wrap items-center justify-between gap-2 text-xs transition-all duration-300 ${
+            className={`w-full bg-white rounded-t-xl border border-slate-300 border-b-0 divide-y divide-slate-100 text-xs transition-all duration-300 shadow-sm ${
               device === "mobile" ? "max-w-[390px]" : device === "tablet" ? "max-w-[768px]" : "max-w-full"
             }`}
           >
-            {/* Window dot icons */}
-            <div className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-full bg-rose-500"></span>
-              <span className="w-2.5 h-2.5 rounded-full bg-amber-500"></span>
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+            {/* Tầng 1: Giả lập URL trình duyệt */}
+            <div className="px-4 py-2 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 flex-shrink-0">
+                <span className="w-2.5 h-2.5 rounded-full bg-rose-500"></span>
+                <span className="w-2.5 h-2.5 rounded-full bg-amber-500"></span>
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+              </div>
+              <div className="flex-1 max-w-sm mx-auto flex items-center justify-center gap-1.5 bg-slate-100/90 px-3 py-1 rounded-md text-[11px] text-slate-600 font-mono truncate">
+                <span className="text-emerald-600 flex-shrink-0">🔒</span>
+                <span className="truncate">https://{currentConfig.brandName.toLowerCase().replace(/[^a-z0-9]/g, "")}.prompttosite.site</span>
+              </div>
+              <div className="flex items-center gap-1 text-[10px] text-emerald-600 font-bold uppercase flex-shrink-0">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                <span className="hidden sm:inline">LIVE</span>
+              </div>
             </div>
 
-            {/* URL thanh địa chỉ */}
-            <div className="flex items-center gap-1.5 bg-slate-100 px-3 py-1 rounded-md text-[11px] text-slate-600 font-mono">
-              <span className="text-emerald-600">🔒</span>
-              <span>https://{currentConfig.brandName.toLowerCase().replace(/[^a-z0-9]/g, "")}.prompttosite.site</span>
-            </div>
-
-            {/* Controls: Color Palette & Click-to-Edit Button */}
-            <div className="flex items-center gap-3">
+            {/* Tầng 2: Controls: Color Palette & Click-to-Edit Button */}
+            <div className="px-4 py-1.5 bg-slate-50/70 flex items-center justify-between gap-2">
               {/* Palette 6 màu */}
-              <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg border border-slate-200" title="Đổi màu sắc thương hiệu">
-                <Palette className="w-3.5 h-3.5 text-slate-500 ml-1 mr-0.5" />
-                {COLOR_THEMES.map((theme) => (
-                  <button
-                    key={theme.id}
-                    onClick={() => handleApplyTheme(theme)}
-                    className={`w-4 h-4 rounded-full ${theme.previewBg} transition-transform hover:scale-125 flex items-center justify-center ${
-                      selectedThemeId === theme.id ? "ring-2 ring-blue-600 ring-offset-1 scale-110" : ""
-                    }`}
-                    title={theme.name}
-                  >
-                    {selectedThemeId === theme.id && <Check className="w-2.5 h-2.5 text-white stroke-[3]" />}
-                  </button>
-                ))}
+              <div className="flex items-center gap-1.5" title="Đổi màu sắc thương hiệu">
+                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider hidden sm:inline">Màu Sắc:</span>
+                <div className="flex items-center gap-1 bg-white p-1 rounded-lg border border-slate-200">
+                  {COLOR_THEMES.map((theme) => (
+                    <button
+                      key={theme.id}
+                      onClick={() => handleApplyTheme(theme)}
+                      className={`w-4 h-4 rounded-full ${theme.previewBg} transition-transform hover:scale-125 flex items-center justify-center ${
+                        selectedThemeId === theme.id ? "ring-2 ring-blue-600 ring-offset-1 scale-110" : ""
+                      }`}
+                      title={theme.name}
+                    >
+                      {selectedThemeId === theme.id && <Check className="w-2.5 h-2.5 text-white stroke-[3]" />}
+                    </button>
+                  ))}
+                </div>
               </div>
 
               {/* Nút Toggle Click-to-Edit */}
@@ -739,8 +745,8 @@ export default function StudioPage() {
                 onClick={toggleEditMode}
                 className={`px-3 py-1 rounded-lg font-bold text-xs flex items-center gap-1.5 transition shadow-sm ${
                   isEditMode
-                    ? "bg-amber-500 text-white hover:bg-amber-600 animate-pulse"
-                    : "bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200"
+                    ? "bg-amber-500 text-white hover:bg-amber-600 ring-2 ring-amber-300"
+                    : "bg-white text-slate-700 hover:bg-slate-100 border border-slate-200"
                 }`}
                 title="Bật/Tắt chế độ sửa nhanh văn bản trực tiếp trên trang"
               >
