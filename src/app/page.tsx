@@ -27,6 +27,7 @@ import {
   Undo2,
   Redo2,
   History,
+  FolderKanban,
 } from "lucide-react";
 import { PromptToSiteLogo } from "@/components/Logo";
 import { ChatMessage, ChatPanel, GENERATION_STEPS } from "@/components/studio/ChatPanel";
@@ -76,6 +77,7 @@ export default function StudioPage() {
   const [industry, setIndustry] = useState<IndustryType>("spa");
   const [config, setConfig] = useState<TemplateBlockConfig>(INDUSTRY_PRESETS.spa);
   const [projectId, setProjectId] = useState<string>("proj_default");
+  const [projects, setProjects] = useState<{ id: string; name: string; industry: IndustryType }[]>([]);
   const [undoStack, setUndoStack] = useState<TemplateBlockConfig[]>([]);
   const [redoStack, setRedoStack] = useState<TemplateBlockConfig[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -181,9 +183,16 @@ export default function StudioPage() {
 
   // ---------- Nạp dữ liệu ban đầu ----------
   useEffect(() => {
+    const urlProj = new URLSearchParams(window.location.search).get("project") || undefined;
+
     fetch("/api/auth")
       .then((r) => r.json())
       .then((d) => d.user && setCurrentUser({ fullName: d.user.fullName, email: d.user.email }))
+      .catch(() => {});
+
+    fetch("/api/projects")
+      .then((r) => r.json())
+      .then((d) => d.success && Array.isArray(d.projects) && setProjects(d.projects))
       .catch(() => {});
 
     fetch("/api/leads")
@@ -191,7 +200,8 @@ export default function StudioPage() {
       .then((d) => d.success && Array.isArray(d.leads) && setLeads(d.leads))
       .catch(() => {});
 
-    fetch("/api/site")
+    const siteUrl = urlProj ? `/api/site?projectId=${encodeURIComponent(urlProj)}` : "/api/site";
+    fetch(siteUrl)
       .then((r) => r.json())
       .then((d) => {
         if (d.site) {
@@ -398,7 +408,7 @@ export default function StudioPage() {
       const res = await fetch("/api/publish", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ config }),
+        body: JSON.stringify({ config, projectId }),
       });
       const data = await res.json();
       if (!res.ok || !data.success) throw new Error(data.error || "Máy chủ từ chối yêu cầu");
@@ -458,6 +468,43 @@ export default function StudioPage() {
         </div>
 
         <div className="flex items-center gap-2">
+          <div className="hidden md:flex items-center gap-1.5">
+            <select
+              value={projectId}
+              onChange={async (e) => {
+                const nextId = e.target.value;
+                if (nextId === "__manage__") {
+                  window.location.href = "/projects";
+                  return;
+                }
+                setProjectId(nextId);
+                const r = await fetch(`/api/site?projectId=${encodeURIComponent(nextId)}`);
+                const d = await r.json();
+                if (d.site) {
+                  knownVersion.current = d.site.version;
+                  remoteApplied.current = true;
+                  loadPage(d.site.config, d.site.industry);
+                  showToast(`Đã chuyển sang dự án: ${d.site.name || d.site.config.brandName}`);
+                }
+              }}
+              className="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200/80 text-xs font-bold text-slate-700 border border-slate-200/80 focus:outline-none cursor-pointer max-w-[190px] truncate"
+              title="Chuyển nhanh dự án"
+            >
+              {projects.length === 0 ? (
+                <option value={projectId}>{config.brandName}</option>
+              ) : (
+                projects.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    📁 {p.name}
+                  </option>
+                ))
+              )}
+              <option value="__manage__">➕ Quản lý / Tạo dự án mới...</option>
+            </select>
+            <Link href="/projects" className="btn-ghost px-2.5 py-2 text-xs" title="Danh sách dự án">
+              <FolderKanban className="w-3.5 h-3.5 text-blue-600" />
+            </Link>
+          </div>
           <Link href="/showcase" className="btn-ghost px-3 py-2 text-xs" title="Trang giới thiệu đề án">
             <Award className="w-3.5 h-3.5 text-amber-500" />
             <span className="hidden md:inline">Giới thiệu đề án</span>
@@ -524,7 +571,14 @@ export default function StudioPage() {
           </nav>
 
           {tab === "chat" && <ChatPanel messages={messages} generating={generating} step={step} onSend={handleGenerate} />}
-          {tab === "crm" && <LeadsPanel leads={leads} />}
+          {tab === "crm" && (
+            <LeadsPanel
+              leads={leads}
+              currentProjectId={projectId}
+              projects={projects.map((p) => ({ id: p.id, name: p.name }))}
+              onLeadsChange={setLeads}
+            />
+          )}
           {tab === "settings" && <SettingsPanel settings={settings} onChange={setSettings} projectId={projectId} />}
         </aside>
 
