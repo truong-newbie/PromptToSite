@@ -255,7 +255,7 @@ export default function ShowcasePage() {
               </div>
               <h3 className="text-base font-bold text-slate-900">Theme Palette Switcher 6 Màu Sắc</h3>
               <p className="text-xs text-slate-600 leading-relaxed">
-                Tích hợp 6 bảng màu chuẩn UX (Spa Ngọc Lam, Tech Tím, Nông sản Xanh lá, Thời trang Hồng, Cà phê Nâu, Sang trọng Đen). Thay đổi màu chủ đạo và điểm nhấn toàn trang web ngay trong 100ms bằng CSS variables.
+                Tích hợp 6 bảng màu chuẩn UX (Xanh Hoàng Gia, Ngọc Lam, Xám Đen, Xanh Rừng, Hồng Rượu Vang, Nâu Cà Phê). Đổi màu chủ đạo và điểm nhấn toàn trang ngay lập tức bằng CSS variables, không cần tải lại.
               </p>
               <div className="pt-2 text-[11px] font-mono text-rose-600 flex items-center gap-1 font-bold">
                 <Check className="w-3.5 h-3.5" /> 6 Bảng màu thiết kế cao cấp

@@ -16,6 +16,7 @@
 | **Giai đoạn 3** | **Model Context Protocol (MCP) Server Endpoint:** Endpoint chuẩn JSON-RPC 2.0 tại `/api/mcp` (hỗ trợ `tools/list`, `tools/call`, `initialize`), file cấu hình `mcp_config.json`, `docker-compose.sandbox.yml` | **ĐÃ XONG** | `18c5196 feat(mcp): implement Model Context Protocol (MCP) server endpoint and tool definitions` |
 | **Giai đoạn 4** | **Lead CRM Persistent Storage & Export CSV:** Lưu trữ dữ liệu khách hàng vào file bền vững `data/leads.json`, xuất file Excel/CSV tiếng Việt UTF-8 BOM, thanh tìm kiếm lead | **ĐÃ XONG** | `3c0aa73 feat(crm): enhance lead management with persistent storage and CSV export` |
 | **Giai đoạn 5** | **Tài liệu Hướng dẫn Chạy & Kịch bản Demo 3 Phút:** README.md chi tiết, bảng kịch bản thuyết trình với Ban Giám khảo, tối ưu toàn diện trải nghiệm người dùng | **ĐÃ XONG** | Tiến hành commit `docs` |
+| **Giai đoạn 6** | **Củng cố & làm mới giao diện:** sửa lỗi template (escape, comment JSX, lead gửi trùng), MCP và CRM dùng dữ liệu thật, xuất bản tại `/s/{slug}`, đồng bộ Studio với AI Agent, giao diện Studio hiện đại và responsive | **ĐÃ XONG** | Xem lịch sử commit |
 
 ---
 
