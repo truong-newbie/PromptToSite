@@ -21,11 +21,24 @@ import {
   ChevronRight,
   ShieldCheck,
   Eye,
+  Edit3,
+  Palette,
+  Check,
+  PhoneCall,
+  Save,
+  Server,
+  Zap,
 } from "lucide-react";
 import JSZip from "jszip";
 import { saveAs } from "file-saver";
 import confetti from "canvas-confetti";
-import { INDUSTRY_PRESETS, generateLandingPageHtml, TemplateBlockConfig } from "@/lib/blocks/template-engine";
+import {
+  INDUSTRY_PRESETS,
+  COLOR_THEMES,
+  ColorTheme,
+  generateLandingPageHtml,
+  TemplateBlockConfig,
+} from "@/lib/blocks/template-engine";
 import { IndustryType, LeadSubmission } from "@/lib/types";
 
 export default function StudioPage() {
@@ -38,6 +51,11 @@ export default function StudioPage() {
   const [currentConfig, setCurrentConfig] = useState<TemplateBlockConfig>(INDUSTRY_PRESETS.spa);
   const [htmlContent, setHtmlContent] = useState<string>("");
   const [isGenerating, setIsGenerating] = useState(false);
+
+  // Chế độ Visual Click-to-Edit & Theme Switcher
+  const [isEditMode, setIsEditMode] = useState<boolean>(false);
+  const [selectedThemeId, setSelectedThemeId] = useState<string>("teal");
+  const [saveStatusToast, setSaveStatusToast] = useState<string | null>(null);
 
   // Prompt chat
   const [promptInput, setPromptInput] = useState("");
@@ -55,10 +73,12 @@ export default function StudioPage() {
   const [leads, setLeads] = useState<LeadSubmission[]>([]);
   const [newLeadAlert, setNewLeadAlert] = useState<LeadSubmission | null>(null);
 
-  // Telegram Settings
+  // Settings: Telegram & API Provider
   const [telegramToken, setTelegramToken] = useState("");
   const [telegramChatId, setTelegramChatId] = useState("");
   const [telegramStatus, setTelegramStatus] = useState<string | null>(null);
+  const [aiProvider, setAiProvider] = useState<string>("mock");
+  const [apiKey, setApiKey] = useState<string>("");
 
   // Modal QR Code Publish
   const [showPublishModal, setShowPublishModal] = useState(false);
@@ -67,14 +87,17 @@ export default function StudioPage() {
 
   // Khởi tạo HTML ban đầu
   useEffect(() => {
-    const initialHtml = generateLandingPageHtml(INDUSTRY_PRESETS.spa);
+    const initialHtml = generateLandingPageHtml(INDUSTRY_PRESETS.spa, { editMode: false });
     setHtmlContent(initialHtml);
   }, []);
 
-  // Lắng nghe sự kiện từ iframe (Khi người dùng điền form trên trang preview)
+  // Lắng nghe sự kiện từ iframe (Bắt Lead & Click-to-Edit)
   useEffect(() => {
     const handleMessage = async (event: MessageEvent) => {
-      if (event.data && event.data.type === "PROMPTTOSITE_LEAD_SUBMITTED") {
+      if (!event.data) return;
+
+      // 1. Nhận Lead mới khi user submit form trong iframe
+      if (event.data.type === "PROMPTTOSITE_LEAD_SUBMITTED") {
         const leadData = event.data.payload;
         const newLead: LeadSubmission = {
           id: "lead_" + Date.now(),
@@ -85,11 +108,9 @@ export default function StudioPage() {
           submittedAt: new Date().toLocaleTimeString("vi-VN"),
         };
 
-        // Cập nhật danh sách Leads
         setLeads((prev) => [newLead, ...prev]);
         setNewLeadAlert(newLead);
 
-        // Bắn pháo hoa chúc mừng
         confetti({
           particleCount: 80,
           spread: 70,
@@ -111,16 +132,67 @@ export default function StudioPage() {
           console.error("Lỗi gửi Telegram", err);
         }
 
-        // Tự động tắt popup alert sau 6 giây
         setTimeout(() => {
           setNewLeadAlert(null);
         }, 6000);
+      }
+
+      // 2. Nhận cập nhật văn bản từ Click-to-edit
+      if (event.data.type === "PROMPTTOSITE_TEXT_UPDATED") {
+        const { key, value, html } = event.data.payload;
+        if (html) setHtmlContent(html);
+        setSaveStatusToast(`Đã lưu trực tiếp: "${value.slice(0, 20)}..."`);
+        setTimeout(() => setSaveStatusToast(null), 2500);
+      }
+
+      // 3. Nhận đồng bộ toàn bộ HTML
+      if (event.data.type === "PROMPTTOSITE_HTML_STATE") {
+        const { html } = event.data.payload;
+        if (html) setHtmlContent(html);
       }
     };
 
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
   }, [currentConfig, telegramToken, telegramChatId]);
+
+  // Bật/Tắt chế độ Visual Click-to-edit
+  const toggleEditMode = () => {
+    const nextMode = !isEditMode;
+    setIsEditMode(nextMode);
+    if (iframeRef.current && iframeRef.current.contentWindow) {
+      iframeRef.current.contentWindow.postMessage(
+        {
+          type: "PROMPTTOSITE_TOGGLE_EDIT_MODE",
+          active: nextMode,
+        },
+        "*"
+      );
+    }
+  };
+
+  // Áp dụng bộ màu Theme mới
+  const handleApplyTheme = (theme: ColorTheme) => {
+    setSelectedThemeId(theme.id);
+    setCurrentConfig((prev) => ({
+      ...prev,
+      primaryColorHex: theme.primary,
+      accentColorHex: theme.accent,
+    }));
+
+    if (iframeRef.current && iframeRef.current.contentWindow) {
+      iframeRef.current.contentWindow.postMessage(
+        {
+          type: "PROMPTTOSITE_SET_PALETTE",
+          primary: theme.primary,
+          accent: theme.accent,
+        },
+        "*"
+      );
+    }
+    setSaveStatusToast(`Đã chuyển theme màu: ${theme.name}`);
+    setTimeout(() => setSaveStatusToast(null), 2000);
+  };
 
   // Xử lý tạo trang bằng AI
   const handleGenerate = async (customPrompt?: string) => {
@@ -130,7 +202,6 @@ export default function StudioPage() {
     setIsGenerating(true);
     const userTime = new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
 
-    // Thêm tin nhắn user vào khung chat
     setChatMessages((prev) => [
       ...prev,
       { role: "user", text: promptToRun, time: userTime },
@@ -141,7 +212,11 @@ export default function StudioPage() {
       const res = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: promptToRun }),
+        body: JSON.stringify({
+          prompt: promptToRun,
+          provider: aiProvider,
+          apiKey: apiKey,
+        }),
       });
 
       const data = await res.json();
@@ -150,12 +225,14 @@ export default function StudioPage() {
         setCurrentConfig(data.config);
         setHtmlContent(data.html);
 
-        // Phản hồi của AI
+        // Reset edit mode về off sau khi sinh lại trang
+        setIsEditMode(false);
+
         setChatMessages((prev) => [
           ...prev,
           {
             role: "assistant",
-            text: `✨ Đã sinh trang thành công cho “${data.config.brandName}”!\n• Khối giao diện: Navbar, Hero ưu đãi, 3 Cam kết, Bảng giá & Form thu thập khách hàng.\n• Tự động tích hợp Form CRM và chuẩn responsive mobile. Bạn có thể kiểm tra ở màn hình xem trước bên phải.`,
+            text: `✨ Đã sinh trang thành công cho “${data.config.brandName}”!\n• Khối giao diện: Navbar, Hero ưu đãi, 3 Cam kết, Bảng giá & Form thu thập khách hàng.\n• Chuẩn responsive mobile + Form CRM. Bạn có thể bật nút "Sửa Nhanh" phía trên để chỉnh sửa câu chữ trực tiếp!`,
             time: new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }),
           },
         ]);
@@ -177,7 +254,10 @@ export default function StudioPage() {
   const handleExportZip = async () => {
     const zip = new JSZip();
     zip.file("index.html", htmlContent);
-    zip.file("README.md", `# Mã Nguồn Landing Page (${currentConfig.brandName})\nĐược xuất bản tự động qua nền tảng PromptToSite AI Platform.\n\n- Mở file index.html trực tiếp trên trình duyệt hoặc upload lên bất kỳ hosting nào (cPanel, Vercel, Netlify, GitHub Pages).\n- Form đăng ký đã được định tuyến tự động.`);
+    zip.file(
+      "README.md",
+      `# Mã Nguồn Landing Page (${currentConfig.brandName})\nĐược xuất bản tự động qua nền tảng PromptToSite AI Platform.\n\n- Mở file index.html trực tiếp trên trình duyệt hoặc upload lên bất kỳ hosting nào (Vercel, Netlify, cPanel).\n- Form đăng ký đã được định tuyến tự động.`
+    );
     const content = await zip.generateAsync({ type: "blob" });
     saveAs(content, `LandingPage_${currentConfig.brandName.replace(/\s+/g, "_")}.zip`);
 
@@ -209,10 +289,10 @@ export default function StudioPage() {
             <div className="flex items-center gap-2">
               <span className="font-extrabold text-slate-900 tracking-tight text-base">PromptToSite</span>
               <span className="text-[10px] bg-blue-50 text-blue-700 font-bold px-2 py-0.5 rounded-full border border-blue-200">
-                MVP v0.1
+                MVP v0.2
               </span>
             </div>
-            <p className="text-[10px] text-slate-400 hidden sm:block">Từ Prompt đến Website thật trong 5 phút</p>
+            <p className="text-[10px] text-slate-400 hidden sm:block">Từ Prompt đến Landing Page thật trong 30 giây</p>
           </div>
         </div>
 
@@ -314,7 +394,7 @@ export default function StudioPage() {
               }`}
             >
               <Settings className="w-3.5 h-3.5" />
-              <span>Telegram & MCP</span>
+              <span>Cài đặt & MCP</span>
             </button>
           </div>
 
@@ -344,7 +424,7 @@ export default function StudioPage() {
                 {isGenerating && (
                   <div className="flex items-center gap-2 p-3 bg-blue-50 text-blue-700 text-xs rounded-xl border border-blue-200">
                     <RefreshCw className="w-4 h-4 animate-spin text-blue-600" />
-                    <span>Đang ghép khối Tailwind & viết nội dung AI... (3s)</span>
+                    <span>Đang cấu trúc landing page theo khung CRO & Tailwind... (2-3s)</span>
                   </div>
                 )}
               </div>
@@ -440,9 +520,10 @@ export default function StudioPage() {
                       <span>📞 {l.phone}</span>
                       <a
                         href={`tel:${l.phone}`}
-                        className="text-[10px] bg-blue-50 text-blue-700 px-2 py-0.5 rounded border border-blue-200 hover:bg-blue-100"
+                        className="text-[10px] bg-blue-50 text-blue-700 px-2 py-0.5 rounded border border-blue-200 hover:bg-blue-100 flex items-center gap-1"
                       >
-                        Gọi ngay
+                        <PhoneCall className="w-3 h-3" />
+                        <span>Gọi ngay</span>
                       </a>
                     </div>
                     {l.note && <p className="text-slate-600 text-[11px]">📝 {l.note}</p>}
@@ -455,6 +536,44 @@ export default function StudioPage() {
           {/* TAB 3: CÀI ĐẶT TELEGRAM BOT & KẾT NỐI MCP */}
           {activeTab === "settings" && (
             <div className="flex-1 p-4 overflow-y-auto space-y-4 text-xs">
+              {/* Cấu hình LLM Provider */}
+              <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
+                <h4 className="font-bold text-slate-800 flex items-center gap-1.5">
+                  <Zap className="w-4 h-4 text-amber-500" />
+                  <span>Cấu hình Trí Tuệ Nhân Tạo (BYOK)</span>
+                </h4>
+                <p className="text-[11px] text-slate-500">
+                  Sử dụng Smart Template Engine (mặc định không tốn API key) hoặc kết nối trực tiếp OpenAI / Gemini của bạn:
+                </p>
+                <div className="space-y-2 pt-1">
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-600 mb-1">Mô hình AI:</label>
+                    <select
+                      value={aiProvider}
+                      onChange={(e) => setAiProvider(e.target.value)}
+                      className="w-full px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-semibold bg-white"
+                    >
+                      <option value="mock">Smart Template Engine (Không cần Key - Tốc độ 100ms)</option>
+                      <option value="gemini">Google Gemini 2.0 Flash (BYOK)</option>
+                      <option value="openai">OpenAI GPT-4o / GPT-4o-mini (BYOK)</option>
+                    </select>
+                  </div>
+                  {aiProvider !== "mock" && (
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-600 mb-1">API Key của bạn:</label>
+                      <input
+                        type="password"
+                        value={apiKey}
+                        onChange={(e) => setApiKey(e.target.value)}
+                        placeholder="Nhập API key tại đây..."
+                        className="w-full px-3 py-1.5 rounded-lg border border-slate-200 font-mono text-xs bg-white"
+                      />
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Cấu hình Telegram */}
               <div className="p-3.5 rounded-xl bg-blue-50 border border-blue-200 space-y-2">
                 <h4 className="font-bold text-blue-900 flex items-center gap-1.5">
                   <Bell className="w-4 h-4 text-blue-600" />
@@ -518,7 +637,7 @@ export default function StudioPage() {
                   Endpoint dành cho ChatGPT Plus hoặc Claude Desktop kết nối trực tiếp vào Docker Sandbox:
                 </p>
                 <div className="p-2 rounded bg-slate-900 text-emerald-400 font-mono text-[10px] break-all">
-                  https://mcp.prompttosite.vn/v1/sandbox/tenant_demo
+                  http://localhost:3000/api/mcp
                 </div>
               </div>
             </div>
@@ -526,31 +645,64 @@ export default function StudioPage() {
         </aside>
 
         {/* ========================= CỘT PHẢI: LIVE PREVIEW CANVAS ========================= */}
-        <main className="flex-1 bg-slate-200/80 p-4 md:p-6 flex flex-col items-center justify-start overflow-hidden relative">
-          {/* Thanh giả lập URL trình duyệt */}
+        <main className="flex-1 bg-slate-200/80 p-3 md:p-5 flex flex-col items-center justify-start overflow-hidden relative">
+          {/* Thanh công cụ phụ: Visual Click-to-Edit & Palette Switcher */}
           <div
-            className={`w-full bg-white rounded-t-xl border border-slate-300 border-b-0 px-4 py-2 flex items-center justify-between text-xs transition-all duration-300 ${
+            className={`w-full bg-white rounded-t-xl border border-slate-300 border-b-0 px-4 py-2 flex flex-wrap items-center justify-between gap-2 text-xs transition-all duration-300 ${
               device === "mobile" ? "max-w-[390px]" : device === "tablet" ? "max-w-[768px]" : "max-w-full"
             }`}
           >
+            {/* Window dot icons */}
             <div className="flex items-center gap-1.5">
               <span className="w-2.5 h-2.5 rounded-full bg-rose-500"></span>
               <span className="w-2.5 h-2.5 rounded-full bg-amber-500"></span>
               <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
             </div>
+
+            {/* URL thanh địa chỉ */}
             <div className="flex items-center gap-1.5 bg-slate-100 px-3 py-1 rounded-md text-[11px] text-slate-600 font-mono">
               <span className="text-emerald-600">🔒</span>
               <span>https://{currentConfig.brandName.toLowerCase().replace(/[^a-z0-9]/g, "")}.prompttosite.site</span>
             </div>
-            <div className="text-[10px] text-slate-400 font-semibold uppercase flex items-center gap-1">
-              <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-              <span className="hidden sm:inline">LIVE</span>
+
+            {/* Controls: Color Palette & Click-to-Edit Button */}
+            <div className="flex items-center gap-3">
+              {/* Palette 6 màu */}
+              <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg border border-slate-200" title="Đổi màu sắc thương hiệu">
+                <Palette className="w-3.5 h-3.5 text-slate-500 ml-1 mr-0.5" />
+                {COLOR_THEMES.map((theme) => (
+                  <button
+                    key={theme.id}
+                    onClick={() => handleApplyTheme(theme)}
+                    className={`w-4 h-4 rounded-full ${theme.previewBg} transition-transform hover:scale-125 flex items-center justify-center ${
+                      selectedThemeId === theme.id ? "ring-2 ring-blue-600 ring-offset-1 scale-110" : ""
+                    }`}
+                    title={theme.name}
+                  >
+                    {selectedThemeId === theme.id && <Check className="w-2.5 h-2.5 text-white stroke-[3]" />}
+                  </button>
+                ))}
+              </div>
+
+              {/* Nút Toggle Click-to-Edit */}
+              <button
+                onClick={toggleEditMode}
+                className={`px-3 py-1 rounded-lg font-bold text-xs flex items-center gap-1.5 transition shadow-sm ${
+                  isEditMode
+                    ? "bg-amber-500 text-white hover:bg-amber-600 animate-pulse"
+                    : "bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200"
+                }`}
+                title="Bật/Tắt chế độ sửa nhanh văn bản trực tiếp trên trang"
+              >
+                <Edit3 className="w-3.5 h-3.5" />
+                <span>{isEditMode ? "Đang Sửa Trực Tiếp" : "Sửa Nhanh"}</span>
+              </button>
             </div>
           </div>
 
           {/* Cửa sổ Iframe hiển thị Landing Page */}
           <div
-            className={`w-full flex-1 bg-white rounded-b-xl border border-slate-300 shadow-xl overflow-hidden transition-all duration-300 ${
+            className={`w-full flex-1 bg-white rounded-b-xl border border-slate-300 shadow-xl overflow-hidden transition-all duration-300 relative ${
               device === "mobile" ? "max-w-[390px]" : device === "tablet" ? "max-w-[768px]" : "max-w-full"
             }`}
           >
@@ -562,6 +714,14 @@ export default function StudioPage() {
               sandbox="allow-scripts allow-forms allow-same-origin"
             />
           </div>
+
+          {/* Toast thông báo lưu nội dung trực quan */}
+          {saveStatusToast && (
+            <div className="absolute bottom-8 right-8 z-50 bg-slate-900/90 backdrop-blur text-white px-4 py-2 rounded-xl text-xs font-semibold shadow-xl border border-slate-700 flex items-center gap-2 animate-in fade-in slide-in-from-bottom-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+              <span>{saveStatusToast}</span>
+            </div>
+          )}
 
           {/* POPUP BÁO LEAD MỚI THỜI GIAN THỰC */}
           {newLeadAlert && (
@@ -633,4 +793,3 @@ export default function StudioPage() {
     </div>
   );
 }
-
