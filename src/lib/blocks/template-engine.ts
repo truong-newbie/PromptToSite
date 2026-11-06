@@ -1,4 +1,4 @@
-import { GenerationRequest, IndustryType } from "../types";
+import { IndustryType } from "../types";
 
 export interface TemplateBlockConfig {
   brandName: string;
@@ -161,156 +161,285 @@ export const INDUSTRY_PRESETS: Record<IndustryType, TemplateBlockConfig> = {
   }
 };
 
-export function generateLandingPageHtml(cfg: TemplateBlockConfig, options?: { editMode?: boolean }): string {
+// ---------------------------------------------------------------------------
+// Tiện ích an toàn: escape HTML, kiểm tra màu / URL, chuẩn hóa cấu hình từ LLM
+// ---------------------------------------------------------------------------
+export function escapeHtml(value: unknown): string {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+const HEX_RE = /^#[0-9a-fA-F]{6}$/;
+const safeHex = (v: unknown, fallback: string) => (typeof v === "string" && HEX_RE.test(v.trim()) ? v.trim() : fallback);
+const safeImageUrl = (v: unknown, fallback: string) => (typeof v === "string" && /^https:\/\//i.test(v.trim()) ? v.trim() : fallback);
+const telHref = (v: string) => v.replace(/[^\d+]/g, "");
+/** Nhúng giá trị vào <script> an toàn (chặn </script>). */
+const jsLiteral = (v: unknown) => JSON.stringify(v).replace(/</g, "\\u003c").split(String.fromCharCode(0x2028)).join("").split(String.fromCharCode(0x2029)).join("");
+
+const str = (v: unknown, fallback: string, max = 400) =>
+  typeof v === "string" && v.trim() ? v.trim().slice(0, max) : fallback;
+
+/**
+ * Chuẩn hóa JSON do LLM trả về: trường nào thiếu hoặc sai kiểu sẽ lấy từ preset,
+ * nên template không bao giờ nhận dữ liệu lệch schema.
+ */
+export function normalizeConfig(raw: unknown, base: TemplateBlockConfig): TemplateBlockConfig {
+  const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, any>;
+  const list = <T,>(value: unknown, fallback: T[], count: number, map: (item: any, fb: T) => T): T[] => {
+    const arr = Array.isArray(value) ? value : [];
+    return fallback.slice(0, count).map((fb, i) => (arr[i] && typeof arr[i] === "object" ? map(arr[i], fb) : fb));
+  };
+
+  return {
+    brandName: str(r.brandName, base.brandName, 60),
+    tagline: str(r.tagline, base.tagline, 100),
+    headline: str(r.headline, base.headline, 160),
+    subheadline: str(r.subheadline, base.subheadline, 320),
+    discountText: str(r.discountText, base.discountText, 160),
+    primaryColorHex: safeHex(r.primaryColorHex, base.primaryColorHex),
+    accentColorHex: safeHex(r.accentColorHex, base.accentColorHex),
+    heroImage: safeImageUrl(r.heroImage, base.heroImage),
+    hotline: str(r.hotline, base.hotline, 20),
+    features: list(r.features, base.features, 3, (it, fb) => ({
+      title: str(it.title, fb.title, 80),
+      desc: str(it.desc, fb.desc, 220),
+      icon: str(it.icon, fb.icon, 8),
+    })),
+    pricing: list(r.pricing, base.pricing, 3, (it, fb) => ({
+      name: str(it.name, fb.name, 70),
+      price: str(it.price, fb.price, 30),
+      originalPrice: str(it.originalPrice, fb.originalPrice, 30),
+      desc: str(it.desc, fb.desc, 220),
+      badge: typeof it.badge === "string" && it.badge.trim() ? it.badge.trim().slice(0, 30) : fb.badge,
+    })),
+    testimonials: list(r.testimonials, base.testimonials, 2, (it, fb) => ({
+      name: str(it.name, fb.name, 70),
+      role: str(it.role, fb.role, 70),
+      comment: str(it.comment, fb.comment, 300),
+      rating: Math.min(5, Math.max(1, Math.round(Number(it.rating) || fb.rating))),
+    })),
+  };
+}
+
+/** Áp dụng một chỉnh sửa trực tiếp (theo data-key trong preview) vào cấu hình. */
+export function applyFieldEdit(cfg: TemplateBlockConfig, key: string, value: string): TemplateBlockConfig {
+  const v = value.trim();
+  if (!v) return cfg;
+  const next: TemplateBlockConfig = {
+    ...cfg,
+    features: cfg.features.map((f) => ({ ...f })),
+    pricing: cfg.pricing.map((p) => ({ ...p })),
+    testimonials: cfg.testimonials.map((t) => ({ ...t })),
+  };
+
+  switch (key) {
+    case "discountText": next.discountText = v; return next;
+    case "brandName":
+    case "brandNameFooter": next.brandName = v; return next;
+    case "tagline": next.tagline = v; return next;
+    case "hotline":
+    case "hotlineFooter": next.hotline = v; return next;
+    case "headline": next.headline = v; return next;
+    case "subheadline": next.subheadline = v; return next;
+  }
+
+  const m = key.match(/^(feature-title|feature-desc|price-name|price-desc|price-val|price-orig|testi-comment|testi-name|testi-role)-(\d+)$/);
+  if (!m) return cfg;
+  const i = Number(m[2]);
+  switch (m[1]) {
+    case "feature-title": if (next.features[i]) next.features[i].title = v; break;
+    case "feature-desc": if (next.features[i]) next.features[i].desc = v; break;
+    case "price-name": if (next.pricing[i]) next.pricing[i].name = v; break;
+    case "price-desc": if (next.pricing[i]) next.pricing[i].desc = v; break;
+    case "price-val": if (next.pricing[i]) next.pricing[i].price = v; break;
+    case "price-orig": if (next.pricing[i]) next.pricing[i].originalPrice = v; break;
+    case "testi-comment": if (next.testimonials[i]) next.testimonials[i].comment = v; break;
+    case "testi-name": if (next.testimonials[i]) next.testimonials[i].name = v; break;
+    case "testi-role": if (next.testimonials[i]) next.testimonials[i].role = v; break;
+  }
+  return next;
+}
+
+export interface GenerateOptions {
+  /** Bật sẵn chế độ sửa trực tiếp. */
+  editMode?: boolean;
+  /** Endpoint nhận lead khi trang chạy độc lập (ngoài Studio). */
+  leadEndpoint?: string;
+}
+
+export function generateLandingPageHtml(cfg: TemplateBlockConfig, options?: GenerateOptions): string {
   const isEditActive = !!options?.editMode;
+  const leadEndpoint = options?.leadEndpoint || "/api/leads";
+
+  const brand = escapeHtml(cfg.brandName);
+  const tagline = escapeHtml(cfg.tagline);
+  const primary = safeHex(cfg.primaryColorHex, "#1d4ed8");
+  const accent = safeHex(cfg.accentColorHex, "#0284c7");
+  const heroImage = escapeHtml(safeImageUrl(cfg.heroImage, INDUSTRY_PRESETS.general.heroImage));
+  const hotlineText = escapeHtml(cfg.hotline);
+  const hotlineHref = escapeHtml(telHref(cfg.hotline));
+  const ce = `contenteditable="${isEditActive}"`;
+  const initial = escapeHtml(Array.from(cfg.brandName.trim())[0] || "P");
+
+  const featureCards = cfg.features
+    .map(
+      (f, i) => `
+        <div class="group p-6 rounded-2xl bg-white border border-slate-200/80 shadow-sm hover:shadow-xl hover:-translate-y-1 transition duration-300 space-y-3">
+          <div class="w-12 h-12 rounded-2xl bg-brand-soft border border-brand-soft flex items-center justify-center text-2xl">${escapeHtml(f.icon)}</div>
+          <h3 class="text-base font-bold text-slate-900 editable-text" data-key="feature-title-${i}" ${ce}>${escapeHtml(f.title)}</h3>
+          <p class="text-sm text-slate-500 leading-relaxed editable-text" data-key="feature-desc-${i}" ${ce}>${escapeHtml(f.desc)}</p>
+        </div>`
+    )
+    .join("");
+
+  const pricingCards = cfg.pricing
+    .map(
+      (p, i) => `
+        <div class="relative p-7 rounded-3xl flex flex-col justify-between gap-6 transition duration-300 ${
+          p.badge ? "bg-white border-2 border-brand shadow-2xl md:-translate-y-3" : "bg-white border border-slate-200 shadow-sm hover:shadow-lg"
+        }">
+          ${p.badge ? `<div class="absolute -top-3.5 left-1/2 -translate-x-1/2 bg-brand text-white text-[11px] font-bold px-3.5 py-1 rounded-full uppercase tracking-wider shadow-md whitespace-nowrap">${escapeHtml(p.badge)}</div>` : ""}
+          <div>
+            <h3 class="font-bold text-slate-900 text-lg editable-text" data-key="price-name-${i}" ${ce}>${escapeHtml(p.name)}</h3>
+            <p class="text-sm text-slate-500 mt-2 leading-relaxed editable-text" data-key="price-desc-${i}" ${ce}>${escapeHtml(p.desc)}</p>
+            <div class="mt-5 flex items-baseline gap-2 flex-wrap">
+              <span class="text-3xl font-extrabold text-slate-900 tracking-tight editable-text" data-key="price-val-${i}" ${ce}>${escapeHtml(p.price)}</span>
+              <span class="text-sm text-slate-400 line-through editable-text" data-key="price-orig-${i}" ${ce}>${escapeHtml(p.originalPrice)}</span>
+            </div>
+          </div>
+          <a href="#orderSection" class="w-full py-3 rounded-xl text-sm font-bold text-center transition ${
+            p.badge ? "btn-brand shadow-lg hover:shadow-xl hover:brightness-110" : "bg-slate-100 text-slate-800 hover:bg-slate-200"
+          }">Đăng Ký Gói Này</a>
+        </div>`
+    )
+    .join("");
+
+  const testimonialCards = cfg.testimonials
+    .map((t, i) => {
+      const stars = "★".repeat(Math.min(5, Math.max(1, t.rating))) + "☆".repeat(5 - Math.min(5, Math.max(1, t.rating)));
+      return `
+        <figure class="p-6 rounded-2xl bg-white border border-slate-200/80 shadow-sm space-y-3">
+          <div class="text-amber-400 text-sm tracking-widest" aria-label="${t.rating} sao">${stars}</div>
+          <blockquote class="text-sm text-slate-600 leading-relaxed">“<span class="editable-text" data-key="testi-comment-${i}" ${ce}>${escapeHtml(t.comment)}</span>”</blockquote>
+          <figcaption class="pt-3 border-t border-slate-100 flex items-center gap-3">
+            <div class="w-9 h-9 rounded-full btn-brand flex items-center justify-center text-xs font-bold">${escapeHtml(Array.from(t.name.trim())[0] || "K")}</div>
+            <div class="min-w-0">
+              <p class="text-sm font-bold text-slate-900 editable-text" data-key="testi-name-${i}" ${ce}>${escapeHtml(t.name)}</p>
+              <p class="text-xs text-slate-400 editable-text" data-key="testi-role-${i}" ${ce}>${escapeHtml(t.role)}</p>
+            </div>
+          </figcaption>
+        </figure>`;
+    })
+    .join("");
 
   return `<!DOCTYPE html>
 <html lang="vi" class="scroll-smooth">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${cfg.brandName} - ${cfg.tagline}</title>
-  <!-- Tailwind CSS CDN -->
+  <title>${brand} - ${tagline}</title>
+  <meta name="description" content="${escapeHtml(cfg.subheadline)}">
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-
   <style>
-    :root {
-      --primary-color: ${cfg.primaryColorHex};
-      --accent-color: ${cfg.accentColorHex};
+    :root { --primary-color: ${primary}; --accent-color: ${accent}; }
+    body { font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #1e293b; background: #fff; -webkit-font-smoothing: antialiased; }
+    .bg-brand { background: var(--primary-color); }
+    .text-brand { color: var(--primary-color); }
+    .border-brand { border-color: var(--primary-color); }
+    .bg-brand-soft { background: color-mix(in srgb, var(--primary-color) 9%, white); }
+    .border-brand-soft { border-color: color-mix(in srgb, var(--primary-color) 22%, white); }
+    .btn-brand { background: linear-gradient(135deg, var(--primary-color), var(--accent-color)); color: #fff; }
+    .hero-glow {
+      background:
+        radial-gradient(55% 60% at 88% 0%, color-mix(in srgb, var(--accent-color) 20%, transparent), transparent 70%),
+        radial-gradient(45% 55% at 0% 10%, color-mix(in srgb, var(--primary-color) 14%, transparent), transparent 70%),
+        #fff;
     }
-    body {
-      font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
-      color: #1e293b;
-      background-color: #ffffff;
-    }
-    .bg-brand-primary {
-      background-color: var(--primary-color) !important;
-    }
-    .text-brand-primary {
-      color: var(--primary-color) !important;
-    }
-    .border-brand-primary {
-      border-color: var(--primary-color) !important;
-    }
+    .focus-brand:focus { outline: none; border-color: var(--primary-color); box-shadow: 0 0 0 4px color-mix(in srgb, var(--primary-color) 18%, white); }
+    ::selection { background: color-mix(in srgb, var(--primary-color) 25%, white); }
 
-    /* Click-to-edit Visual Styles */
-    .editable-text {
-      position: relative;
-      transition: all 0.2s ease;
-    }
-    body.edit-mode-active .editable-text {
-      outline: 2px dashed #3b82f6 !important;
-      outline-offset: 3px !important;
-      cursor: text !important;
-      background: rgba(59, 130, 246, 0.05) !important;
-      border-radius: 4px !important;
-    }
-    body.edit-mode-active .editable-text:hover {
-      outline: 2px solid #2563eb !important;
-      background: rgba(59, 130, 246, 0.1) !important;
-    }
-    body.edit-mode-active .editable-text:focus {
-      outline: 2px solid #1d4ed8 !important;
-      background: rgba(59, 130, 246, 0.15) !important;
-    }
-    
-    .edit-mode-badge {
-      display: none;
-    }
-    body.edit-mode-active .edit-mode-badge {
-      display: flex;
-    }
+    .editable-text { transition: background .15s ease, outline-color .15s ease; }
+    body.edit-mode-active .editable-text { outline: 2px dashed #3b82f6; outline-offset: 3px; cursor: text; border-radius: 4px; background: rgba(59,130,246,.06); }
+    body.edit-mode-active .editable-text:hover { outline-style: solid; background: rgba(59,130,246,.12); }
+    body.edit-mode-active .editable-text:focus { outline: 2px solid #1d4ed8; background: rgba(59,130,246,.16); }
+    .edit-mode-badge { display: none; }
+    body.edit-mode-active .edit-mode-badge { display: flex; }
   </style>
 </head>
-<body class="antialiased ${isEditActive ? 'edit-mode-active' : ''}">
+<body class="antialiased pb-16 md:pb-0 ${isEditActive ? "edit-mode-active" : ""}">
 
-  <!-- FLOATING EDIT MODE NOTIFICATION -->
-  <div class="edit-mode-badge fixed bottom-4 left-4 z-50 bg-blue-600 text-white text-xs font-semibold px-3 py-1.5 rounded-full shadow-lg items-center gap-1.5">
-    <span>✏️ Chế độ Sửa Nhanh đang bật: Bấm vào văn bản để chỉnh sửa trực tiếp</span>
+  <div class="edit-mode-badge fixed top-16 left-1/2 -translate-x-1/2 z-50 bg-slate-900 text-white text-xs font-semibold px-3.5 py-2 rounded-full shadow-xl items-center gap-2 whitespace-nowrap">
+    <span class="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+    <span>Chế độ Sửa Nhanh: bấm vào văn bản để chỉnh trực tiếp</span>
   </div>
 
-  <!-- TOP ANNOUNCEMENT BAR (THIẾT KẾ NHÃ NHẶN, TINH TẾ) -->
-  <div class="bg-slate-900 text-slate-200 py-2 px-4 text-center text-xs font-medium flex items-center justify-center gap-2 border-b border-slate-800">
-    <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-    <span class="editable-text truncate" data-key="discountText" contenteditable="${isEditActive}">${cfg.discountText}</span>
+  <div class="bg-slate-900 text-slate-100 py-2 px-4 text-center text-xs font-medium flex items-center justify-center gap-2">
+    <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse flex-shrink-0"></span>
+    <span class="editable-text" data-key="discountText" ${ce}>${escapeHtml(cfg.discountText)}</span>
   </div>
 
-  <!-- HEADER / NAVBAR (CHUẨN CHỈNH, KHÔNG BAO GIỜ ĐÈ CHỮ TRÊN MOBILE) -->
-  <header class="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200/80 shadow-[0_1px_3px_rgba(0,0,0,0.03)] transition">
+  <header class="sticky top-0 z-40 bg-white/80 backdrop-blur-xl border-b border-slate-200/70">
     <div class="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
-      {/* Cụm Thương Hiệu */}
       <div class="flex items-center gap-2.5 min-w-0">
-        <div class="w-8 h-8 rounded-lg bg-brand-primary flex items-center justify-center text-white font-bold text-sm shadow-sm flex-shrink-0">
-          ${cfg.brandName.charAt(0)}
-        </div>
+        <div class="w-9 h-9 rounded-xl btn-brand flex items-center justify-center font-bold text-sm shadow-md flex-shrink-0">${initial}</div>
         <div class="min-w-0">
-          <span class="font-bold text-slate-900 text-sm sm:text-base tracking-tight truncate block editable-text" data-key="brandName" contenteditable="${isEditActive}">
-            ${cfg.brandName}
-          </span>
-          <span class="text-[10px] text-slate-400 uppercase tracking-wider block font-medium truncate hidden sm:block editable-text" data-key="tagline" contenteditable="${isEditActive}">
-            ${cfg.tagline}
-          </span>
+          <span class="font-bold text-slate-900 text-sm sm:text-base tracking-tight truncate block editable-text" data-key="brandName" ${ce}>${brand}</span>
+          <span class="text-[10px] text-slate-400 uppercase tracking-wider font-medium truncate hidden sm:block editable-text" data-key="tagline" ${ce}>${tagline}</span>
         </div>
       </div>
-
-      {/* Hotline & Nút CTA */}
-      <div class="flex items-center gap-2 sm:gap-3 flex-shrink-0">
-        <a href="tel:${cfg.hotline}" class="px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold flex items-center gap-1.5 transition">
-          <span class="text-slate-500">📞</span>
-          <span class="editable-text hidden sm:inline" data-key="hotline" contenteditable="${isEditActive}">${cfg.hotline}</span>
+      <nav class="hidden md:flex items-center gap-6 text-sm font-medium text-slate-600">
+        <a href="#featuresSection" class="hover:text-brand transition">Lợi thế</a>
+        <a href="#pricingSection" class="hover:text-brand transition">Bảng giá</a>
+        <a href="#reviewSection" class="hover:text-brand transition">Đánh giá</a>
+      </nav>
+      <div class="flex items-center gap-2 flex-shrink-0">
+        <a href="tel:${hotlineHref}" class="hidden sm:flex px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold items-center gap-1.5 transition">
+          <span>📞</span><span class="editable-text" data-key="hotline" ${ce}>${hotlineText}</span>
         </a>
-        <a href="#orderSection" class="px-3.5 py-1.5 rounded-lg bg-brand-primary text-white text-xs font-bold shadow-sm hover:opacity-95 transition">
-          <span>Đăng Ký</span>
-        </a>
+        <a href="#orderSection" class="px-4 py-2 rounded-xl btn-brand text-xs font-bold shadow-md hover:shadow-lg hover:brightness-110 transition">Đăng Ký</a>
       </div>
     </div>
   </header>
 
-  <!-- HERO SECTION (THANH LỊCH, HIỆN ĐẠI, KHÔNG RƯỜM RÀ) -->
-  <section class="py-12 sm:py-16 md:py-20 bg-gradient-to-b from-slate-50/60 to-white">
+  <section class="hero-glow py-14 sm:py-20 md:py-24">
     <div class="max-w-6xl mx-auto px-4">
-      <div class="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-center">
-        <!-- Cột Nội Dung -->
-        <div class="lg:col-span-7 space-y-4 sm:space-y-5 text-center lg:text-left">
-          <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-50 border border-blue-200/80 text-blue-700 text-xs font-semibold">
-            <span class="w-1.5 h-1.5 rounded-full bg-blue-600"></span>
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-10 lg:gap-14 items-center">
+        <div class="lg:col-span-7 space-y-5 text-center lg:text-left">
+          <div class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-brand-soft border border-brand-soft text-brand text-xs font-bold">
+            <span class="w-1.5 h-1.5 rounded-full bg-brand"></span>
             <span>Cam kết dịch vụ chất lượng cao</span>
           </div>
-
-          <h1 class="text-2xl sm:text-4xl md:text-5xl font-extrabold text-slate-900 leading-[1.25] tracking-tight editable-text" data-key="headline" contenteditable="${isEditActive}">
-            ${cfg.headline}
-          </h1>
-
-          <p class="text-sm sm:text-base md:text-lg text-slate-600 leading-relaxed font-normal editable-text max-w-xl mx-auto lg:mx-0" data-key="subheadline" contenteditable="${isEditActive}">
-            ${cfg.subheadline}
-          </p>
-
+          <h1 class="text-3xl sm:text-5xl md:text-[3.4rem] font-extrabold text-slate-900 leading-[1.15] tracking-tight editable-text" data-key="headline" ${ce}>${escapeHtml(cfg.headline)}</h1>
+          <p class="text-base md:text-lg text-slate-600 leading-relaxed max-w-xl mx-auto lg:mx-0 editable-text" data-key="subheadline" ${ce}>${escapeHtml(cfg.subheadline)}</p>
           <div class="pt-2 flex flex-col sm:flex-row gap-3 justify-center lg:justify-start">
-            <a href="#orderSection" class="px-6 py-3 rounded-xl bg-brand-primary text-white text-xs sm:text-sm font-bold text-center shadow-md hover:shadow-lg hover:opacity-95 transition">
-              Đăng Ký Tư Vấn Miễn Phí
-            </a>
-            <a href="#pricingSection" class="px-5 py-3 rounded-xl bg-white hover:bg-slate-50 text-slate-700 text-xs sm:text-sm font-semibold text-center border border-slate-200 shadow-sm transition">
-              Xem Bảng Giá Dịch Vụ
-            </a>
+            <a href="#orderSection" class="px-7 py-3.5 rounded-xl btn-brand text-sm font-bold text-center shadow-xl hover:shadow-2xl hover:brightness-110 transition">Đăng Ký Tư Vấn Miễn Phí</a>
+            <a href="#pricingSection" class="px-6 py-3.5 rounded-xl bg-white hover:bg-slate-50 text-slate-700 text-sm font-semibold text-center border border-slate-200 shadow-sm transition">Xem Bảng Giá</a>
           </div>
-
-          <!-- Social Proof Stars -->
-          <div class="pt-2 flex items-center justify-center lg:justify-start gap-2 text-xs text-slate-500">
-            <div class="flex text-amber-400 text-xs">★★★★★</div>
-            <span>Được hơn <b>2.500+</b> khách hàng tin tưởng lựa chọn</span>
+          <div class="pt-2 flex items-center justify-center lg:justify-start gap-2.5 text-xs text-slate-500">
+            <span class="text-amber-400 tracking-widest text-sm">★★★★★</span>
+            <span>Được nhiều khách hàng tin tưởng lựa chọn</span>
           </div>
         </div>
 
-        <!-- Cột Ảnh Bìa -->
         <div class="lg:col-span-5">
-          <div class="relative mx-auto max-w-md rounded-2xl overflow-hidden shadow-lg border border-slate-200 bg-white p-2">
-            <img src="${cfg.heroImage}" alt="${cfg.brandName}" class="w-full h-64 sm:h-80 md:h-[380px] object-cover rounded-xl">
-            <div class="absolute bottom-4 left-4 right-4 bg-white/95 backdrop-blur-md p-3.5 rounded-xl border border-slate-200 shadow-sm text-xs">
-              <p class="font-bold text-slate-900">Dịch vụ chu đáo, tận tâm</p>
-              <p class="text-slate-500 text-[11px] mt-0.5">Tư vấn hỗ trợ trực tiếp 24/7 trên toàn quốc.</p>
+          <div class="relative mx-auto max-w-md">
+            <div class="absolute -inset-3 rounded-[2rem] btn-brand opacity-15 blur-2xl"></div>
+            <div class="relative rounded-3xl overflow-hidden shadow-2xl border border-white bg-slate-100 aspect-[4/5] sm:aspect-[5/5]">
+              <img src="${heroImage}" alt="${brand}" referrerpolicy="no-referrer" onerror="this.style.display='none'" class="w-full h-full object-cover">
+              <div class="absolute bottom-4 left-4 right-4 bg-white/90 backdrop-blur-md p-4 rounded-2xl border border-white shadow-lg flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl btn-brand flex items-center justify-center text-lg flex-shrink-0">✓</div>
+                <div>
+                  <p class="text-sm font-bold text-slate-900">Dịch vụ chu đáo, tận tâm</p>
+                  <p class="text-xs text-slate-500">Tư vấn hỗ trợ trực tiếp trên toàn quốc</p>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -318,265 +447,175 @@ export function generateLandingPageHtml(cfg: TemplateBlockConfig, options?: { ed
     </div>
   </section>
 
-  <!-- FEATURES / CAM KẾT (TỐI GIẢN, SẠCH SẼ) -->
-  <section class="py-14 sm:py-18 bg-white border-y border-slate-200/80">
+  <section id="featuresSection" class="py-16 sm:py-24 bg-white">
     <div class="max-w-6xl mx-auto px-4">
-      <div class="text-center max-w-2xl mx-auto mb-10 space-y-1.5">
-        <h2 class="text-xs uppercase tracking-widest font-bold text-brand-primary">Lợi Thế Nổi Bật</h2>
-        <p class="text-xl sm:text-3xl font-extrabold text-slate-900">Tại Sao Khách Hàng Luôn Tin Chọn Chúng Tôi?</p>
+      <div class="text-center max-w-2xl mx-auto mb-12 space-y-2">
+        <h2 class="text-xs uppercase tracking-[0.2em] font-bold text-brand">Lợi Thế Nổi Bật</h2>
+        <p class="text-2xl sm:text-4xl font-extrabold text-slate-900 tracking-tight">Tại Sao Khách Hàng Luôn Tin Chọn Chúng Tôi?</p>
       </div>
-
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-        ${cfg.features.map((f, i) => `
-          <div class="p-6 rounded-2xl bg-slate-50/60 border border-slate-200/80 hover:bg-white hover:shadow-md transition space-y-2.5">
-            <div class="w-10 h-10 rounded-xl bg-white border border-slate-200 flex items-center justify-center text-lg shadow-sm">
-              ${f.icon}
-            </div>
-            <h3 class="text-base font-bold text-slate-900 editable-text" data-key="feature-title-${i}" contenteditable="${isEditActive}">
-              ${f.title}
-            </h3>
-            <p class="text-xs text-slate-500 leading-relaxed editable-text" data-key="feature-desc-${i}" contenteditable="${isEditActive}">
-              ${f.desc}
-            </p>
-          </div>
-        `).join("")}
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-6">${featureCards}
       </div>
     </div>
   </section>
 
-  <!-- PRICING PACKAGES (MINH BẠCH, GỌN GÀNG) -->
-  <section id="pricingSection" class="py-14 sm:py-20 bg-slate-50/50">
+  <section id="pricingSection" class="py-16 sm:py-24 bg-slate-50">
     <div class="max-w-6xl mx-auto px-4">
-      <div class="text-center max-w-2xl mx-auto mb-12 space-y-1.5">
-        <h2 class="text-xs uppercase tracking-widest font-bold text-brand-primary">Bảng Giá Công Khai</h2>
-        <p class="text-xl sm:text-3xl font-extrabold text-slate-900">Các Gói Dịch Vụ Phổ Biến</p>
-        <p class="text-xs text-slate-500">Chi phí hợp lý, minh bạch, cam kết không phát sinh phụ phí.</p>
+      <div class="text-center max-w-2xl mx-auto mb-14 space-y-2">
+        <h2 class="text-xs uppercase tracking-[0.2em] font-bold text-brand">Bảng Giá Công Khai</h2>
+        <p class="text-2xl sm:text-4xl font-extrabold text-slate-900 tracking-tight">Các Gói Dịch Vụ Phổ Biến</p>
+        <p class="text-sm text-slate-500">Chi phí hợp lý, minh bạch, cam kết không phát sinh phụ phí.</p>
       </div>
-
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-6 items-stretch">
-        ${cfg.pricing.map((p, i) => `
-          <div class="p-6 rounded-2xl border ${p.badge ? 'border-brand-primary bg-white shadow-md relative ring-1 ring-brand-primary/20' : 'border-slate-200 bg-white shadow-sm'} flex flex-col justify-between space-y-5">
-            ${p.badge ? `<div class="absolute -top-3 left-1/2 -translate-x-1/2 bg-brand-primary text-white text-[10px] font-bold px-3 py-0.5 rounded-full uppercase tracking-wider shadow-sm">${p.badge}</div>` : ''}
-            <div>
-              <h3 class="font-bold text-slate-900 text-base editable-text" data-key="price-name-${i}" contenteditable="${isEditActive}">${p.name}</h3>
-              <p class="text-xs text-slate-500 mt-1 editable-text" data-key="price-desc-${i}" contenteditable="${isEditActive}">${p.desc}</p>
-              
-              <div class="mt-4 flex items-baseline gap-2">
-                <span class="text-2xl sm:text-3xl font-extrabold text-slate-900 editable-text" data-key="price-val-${i}" contenteditable="${isEditActive}">${p.price}</span>
-                <span class="text-xs text-slate-400 line-through editable-text" data-key="price-orig-${i}" contenteditable="${isEditActive}">${p.originalPrice}</span>
-              </div>
-            </div>
-
-            <a href="#orderSection" class="w-full py-2.5 rounded-xl ${p.badge ? 'bg-brand-primary text-white hover:opacity-95' : 'bg-slate-100 text-slate-800 hover:bg-slate-200'} text-xs font-bold text-center transition">
-              Đăng Ký Gói Này
-            </a>
-          </div>
-        `).join("")}
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-6 items-stretch">${pricingCards}
       </div>
     </div>
   </section>
 
-  <!-- TESTIMONIALS (CHÂN THẬT) -->
-  <section class="py-14 bg-white border-t border-slate-200/80">
+  <section id="reviewSection" class="py-16 sm:py-24 bg-white">
     <div class="max-w-6xl mx-auto px-4">
-      <div class="text-center max-w-xl mx-auto mb-10 space-y-1">
-        <h2 class="text-xs uppercase tracking-widest font-bold text-brand-primary">Đánh Giá Thực Tế</h2>
-        <p class="text-xl sm:text-2xl font-extrabold text-slate-900">Cảm Nhận Từ Khách Hàng</p>
+      <div class="text-center max-w-xl mx-auto mb-12 space-y-2">
+        <h2 class="text-xs uppercase tracking-[0.2em] font-bold text-brand">Đánh Giá Thực Tế</h2>
+        <p class="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">Cảm Nhận Từ Khách Hàng</p>
       </div>
-
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-4xl mx-auto">
-        ${cfg.testimonials.map((t, i) => `
-          <div class="p-5 rounded-2xl bg-slate-50/70 border border-slate-200/80 space-y-2.5">
-            <div class="flex text-amber-400 text-xs">★★★★★</div>
-            <p class="text-xs text-slate-600 leading-relaxed editable-text" data-key="testi-comment-${i}" contenteditable="${isEditActive}">"${t.comment}"</p>
-            <div class="pt-2 border-t border-slate-200/60 flex items-center justify-between">
-              <div>
-                <p class="text-xs font-bold text-slate-900 editable-text" data-key="testi-name-${i}" contenteditable="${isEditActive}">${t.name}</p>
-                <p class="text-[10px] text-slate-400 editable-text" data-key="testi-role-${i}" contenteditable="${isEditActive}">${t.role}</p>
-              </div>
-              <span class="text-[10px] bg-slate-200/60 text-slate-600 font-semibold px-2 py-0.5 rounded">Đã trải nghiệm</span>
-            </div>
-          </div>
-        `).join("")}
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-4xl mx-auto">${testimonialCards}
       </div>
     </div>
   </section>
 
-  <!-- LEAD CAPTURE FORM / ĐẶT HÀNG -->
-  <section id="orderSection" class="py-14 sm:py-20 bg-slate-50/50 border-t border-slate-200">
+  <section id="orderSection" class="py-16 sm:py-24 hero-glow">
     <div class="max-w-md mx-auto px-4">
-      <div class="bg-white rounded-2xl p-6 sm:p-8 border border-slate-200 shadow-lg space-y-5">
-        <div class="text-center space-y-1">
-          <h2 class="text-xl sm:text-2xl font-bold text-slate-900">Đăng Ký Nhận Tư Vấn</h2>
-          <p class="text-xs text-slate-500">Chuyên viên sẽ liên hệ lại hỗ trợ bạn trong vòng 10 phút.</p>
+      <div class="bg-white rounded-3xl p-7 sm:p-9 border border-slate-200/80 shadow-2xl space-y-6">
+        <div class="text-center space-y-1.5">
+          <h2 class="text-2xl font-extrabold text-slate-900 tracking-tight">Đăng Ký Nhận Tư Vấn</h2>
+          <p class="text-sm text-slate-500">Chuyên viên sẽ liên hệ lại hỗ trợ bạn trong vòng 10 phút.</p>
         </div>
 
-        <form id="leadCaptureForm" class="space-y-3.5">
+        <form id="leadCaptureForm" class="space-y-4" novalidate>
           <div>
-            <label class="block text-xs font-semibold text-slate-700 mb-1">Họ và tên của bạn:</label>
-            <input 
-              type="text" 
-              name="fullName" 
-              required 
-              placeholder="Nguyễn Văn A" 
-              class="w-full px-3.5 py-2.5 rounded-lg border border-slate-200 text-xs focus:ring-2 focus:ring-blue-600 focus:outline-none bg-slate-50/50"
-            >
+            <label class="block text-xs font-semibold text-slate-700 mb-1.5" for="fullName">Họ và tên của bạn</label>
+            <input id="fullName" type="text" name="fullName" required maxlength="80" autocomplete="name" placeholder="Nguyễn Văn A"
+              class="focus-brand w-full px-4 py-3 rounded-xl border border-slate-200 text-sm bg-slate-50/60 transition">
           </div>
-
           <div>
-            <label class="block text-xs font-semibold text-slate-700 mb-1">Số điện thoại liên hệ:</label>
-            <input 
-              type="tel" 
-              name="phone" 
-              required 
-              placeholder="0988123456" 
-              class="w-full px-3.5 py-2.5 rounded-lg border border-slate-200 text-xs focus:ring-2 focus:ring-blue-600 focus:outline-none bg-slate-50/50"
-            >
+            <label class="block text-xs font-semibold text-slate-700 mb-1.5" for="phone">Số điện thoại liên hệ</label>
+            <input id="phone" type="tel" name="phone" required maxlength="16" inputmode="tel" autocomplete="tel" placeholder="0988123456"
+              class="focus-brand w-full px-4 py-3 rounded-xl border border-slate-200 text-sm bg-slate-50/60 transition">
           </div>
-
           <div>
-            <label class="block text-xs font-semibold text-slate-700 mb-1">Nhu cầu hoặc câu hỏi cần tư vấn:</label>
-            <textarea 
-              name="note" 
-              rows="2" 
-              placeholder="Bạn quan tâm gói nào hoặc cần thêm thông tin gì..." 
-              class="w-full px-3.5 py-2.5 rounded-lg border border-slate-200 text-xs focus:ring-2 focus:ring-blue-600 focus:outline-none bg-slate-50/50"
-            ></textarea>
+            <label class="block text-xs font-semibold text-slate-700 mb-1.5" for="note">Nhu cầu hoặc câu hỏi cần tư vấn</label>
+            <textarea id="note" name="note" rows="3" maxlength="300" placeholder="Bạn quan tâm gói nào hoặc cần thêm thông tin gì..."
+              class="focus-brand w-full px-4 py-3 rounded-xl border border-slate-200 text-sm bg-slate-50/60 transition resize-none"></textarea>
           </div>
-
-          <button 
-            type="submit" 
-            id="submitBtn" 
-            class="w-full py-3 rounded-xl bg-brand-primary text-white font-bold text-xs sm:text-sm shadow-md hover:opacity-95 transition"
-          >
-            Gửi Yêu Cầu Tư Vấn
-          </button>
-
-          <p class="text-[10px] text-center text-slate-400">
-            Cam kết bảo mật thông tin khách hàng tuyệt đối theo quy định.
-          </p>
+          <input type="text" name="website" tabindex="-1" autocomplete="off" aria-hidden="true" style="position:absolute;left:-9999px;opacity:0;height:0;width:0">
+          <p id="formError" class="hidden text-xs font-semibold text-rose-600"></p>
+          <button type="submit" id="submitBtn" class="w-full py-3.5 rounded-xl btn-brand font-bold text-sm shadow-lg hover:shadow-xl hover:brightness-110 transition disabled:opacity-60">Gửi Yêu Cầu Tư Vấn</button>
+          <p class="text-[11px] text-center text-slate-400">Thông tin của bạn được bảo mật và chỉ dùng để tư vấn.</p>
         </form>
 
-        <!-- THÔNG BÁO GỬI THÀNH CÔNG -->
-        <div id="successMsg" class="hidden text-center py-6 space-y-1.5">
-          <div class="text-3xl text-emerald-600">✓</div>
-          <h3 class="font-bold text-slate-900 text-sm">Gửi Yêu Cầu Thành Công</h3>
-          <p class="text-xs text-slate-500">Chúng tôi đã tiếp nhận thông tin và sẽ liên hệ hỗ trợ bạn sớm nhất.</p>
+        <div id="successMsg" class="hidden text-center py-6 space-y-2">
+          <div class="w-14 h-14 mx-auto rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center text-2xl font-bold">✓</div>
+          <h3 class="font-bold text-slate-900">Gửi Yêu Cầu Thành Công</h3>
+          <p class="text-sm text-slate-500">Chúng tôi đã tiếp nhận thông tin và sẽ liên hệ hỗ trợ bạn sớm nhất.</p>
         </div>
       </div>
     </div>
   </section>
 
-  <!-- FOOTER -->
-  <footer class="bg-slate-900 text-slate-400 py-8 border-t border-slate-800 text-xs">
+  <footer class="bg-slate-900 text-slate-400 py-10 text-sm">
     <div class="max-w-6xl mx-auto px-4 text-center space-y-2">
-      <p class="font-bold text-slate-200 editable-text" data-key="brandNameFooter" contenteditable="${isEditActive}">${cfg.brandName}</p>
-      <p>Hotline: <span class="text-white editable-text" data-key="hotlineFooter" contenteditable="${isEditActive}">${cfg.hotline}</span></p>
-      <p class="text-slate-500">Trang web được xuất bản trên nền tảng PromptToSite.</p>
+      <p class="font-bold text-white text-base editable-text" data-key="brandNameFooter" ${ce}>${brand}</p>
+      <p>Hotline: <a href="tel:${hotlineHref}" class="text-white font-semibold editable-text" data-key="hotlineFooter" ${ce}>${hotlineText}</a></p>
+      <p class="text-xs text-slate-500 pt-2">Trang web được tạo bằng PromptToSite.</p>
     </div>
   </footer>
 
-  <!-- SCRIPT BẮT LEAD & GIAO TIẾP VỚI PARENT STUDIO QUA POSTMESSAGE -->
+  <div class="md:hidden fixed bottom-0 inset-x-0 z-40 bg-white/90 backdrop-blur-xl border-t border-slate-200 p-3 flex gap-2">
+    <a href="tel:${hotlineHref}" class="flex-1 py-3 rounded-xl bg-slate-100 text-slate-800 text-sm font-bold text-center">📞 Gọi ngay</a>
+    <a href="#orderSection" class="flex-[1.4] py-3 rounded-xl btn-brand text-sm font-bold text-center shadow-lg">Đăng ký tư vấn</a>
+  </div>
+
   <script>
-    const form = document.getElementById('leadCaptureForm');
-    const successMsg = document.getElementById('successMsg');
-    const submitBtn = document.getElementById('submitBtn');
+    (function () {
+      var LEAD_ENDPOINT = ${jsLiteral(leadEndpoint)};
+      var BRAND = ${jsLiteral(cfg.brandName)};
+      var inStudio = window.parent !== window;
 
-    if (form) {
-      form.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        submitBtn.disabled = true;
-        submitBtn.innerText = 'Đang xử lý...';
+      var form = document.getElementById('leadCaptureForm');
+      var successMsg = document.getElementById('successMsg');
+      var submitBtn = document.getElementById('submitBtn');
+      var errorEl = document.getElementById('formError');
 
-        const formData = new FormData(form);
-        const leadData = {
-          fullName: formData.get('fullName'),
-          phone: formData.get('phone'),
-          note: formData.get('note'),
-          brandName: "${cfg.brandName}",
-          submittedAt: new Date().toISOString()
-        };
+      function showError(msg) { errorEl.textContent = msg; errorEl.classList.remove('hidden'); }
 
-        window.parent.postMessage({
-          type: 'PROMPTTOSITE_LEAD_SUBMITTED',
-          payload: leadData
-        }, '*');
-
-        try {
-          await fetch('/api/leads', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(leadData)
-          });
-        } catch (err) {
-          console.log('Lead submitted locally via postMessage');
-        }
-
-        form.classList.add('hidden');
-        successMsg.classList.remove('hidden');
-      });
-    }
-
-    // Lắng nghe sự kiện gõ sửa trực quan (Click-to-edit)
-    function notifyParentOfChange(key, value) {
-      window.parent.postMessage({
-        type: 'PROMPTTOSITE_TEXT_UPDATED',
-        payload: {
-          key: key,
-          value: value,
-          html: document.documentElement.outerHTML
-        }
-      }, '*');
-    }
-
-    document.querySelectorAll('.editable-text').forEach((el) => {
-      el.addEventListener('blur', () => {
-        const key = el.getAttribute('data-key');
-        const val = el.innerText.trim();
-        notifyParentOfChange(key, val);
-      });
-      el.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && !e.shiftKey) {
+      if (form) {
+        form.addEventListener('submit', function (e) {
           e.preventDefault();
-          el.blur();
-        }
-      });
-    });
+          errorEl.classList.add('hidden');
+          var fd = new FormData(form);
+          var fullName = String(fd.get('fullName') || '').trim();
+          var phone = String(fd.get('phone') || '').replace(/[\\s.\\-]/g, '');
+          if (fullName.length < 2) return showError('Vui lòng nhập họ và tên.');
+          if (!/^(\\+84|0)\\d{9,10}$/.test(phone)) return showError('Số điện thoại chưa đúng (VD: 0988123456).');
 
-    // Lắng nghe lệnh điều khiển từ Parent Window (Web Studio)
-    window.addEventListener('message', (event) => {
-      if (!event.data) return;
+          function done() { form.classList.add('hidden'); successMsg.classList.remove('hidden'); }
+          if (fd.get('website')) return done(); // honeypot: bot
 
-      if (event.data.type === 'PROMPTTOSITE_TOGGLE_EDIT_MODE') {
-        const active = !!event.data.active;
-        if (active) {
-          document.body.classList.add('edit-mode-active');
-        } else {
-          document.body.classList.remove('edit-mode-active');
-        }
-        document.querySelectorAll('.editable-text').forEach((el) => {
-          el.setAttribute('contenteditable', active ? 'true' : 'false');
+          var lead = { fullName: fullName, phone: phone, note: String(fd.get('note') || '').trim(), brandName: BRAND };
+          submitBtn.disabled = true;
+          submitBtn.textContent = 'Đang gửi...';
+
+          if (inStudio) {
+            window.parent.postMessage({ type: 'PROMPTTOSITE_LEAD_SUBMITTED', payload: lead }, '*');
+            return done();
+          }
+          fetch(LEAD_ENDPOINT, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(lead) })
+            .then(function (r) { if (!r.ok) throw new Error('bad'); done(); })
+            .catch(function () {
+              submitBtn.disabled = false;
+              submitBtn.textContent = 'Gửi Yêu Cầu Tư Vấn';
+              showError('Chưa gửi được, vui lòng thử lại hoặc gọi hotline.');
+            });
         });
       }
 
-      if (event.data.type === 'PROMPTTOSITE_SET_PALETTE') {
-        const { primary, accent } = event.data;
-        if (primary) document.documentElement.style.setProperty('--primary-color', primary);
-        if (accent) document.documentElement.style.setProperty('--accent-color', accent);
-        setTimeout(() => {
-          window.parent.postMessage({
-            type: 'PROMPTTOSITE_HTML_STATE',
-            payload: { html: document.documentElement.outerHTML }
-          }, '*');
-        }, 100);
+      function notify(key, value) {
+        window.parent.postMessage({ type: 'PROMPTTOSITE_TEXT_UPDATED', payload: { key: key, value: value } }, '*');
       }
 
-      if (event.data.type === 'PROMPTTOSITE_UPDATE_FIELD') {
-        const { key, value } = event.data;
-        const target = document.querySelector(\`[data-key="\${key}"]\`);
-        if (target) target.innerText = value;
-      }
-    });
+      document.querySelectorAll('.editable-text').forEach(function (el) {
+        el.addEventListener('blur', function () {
+          if (el.getAttribute('contenteditable') !== 'true') return;
+          notify(el.getAttribute('data-key'), el.innerText.trim());
+        });
+        el.addEventListener('keydown', function (e) {
+          if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); el.blur(); }
+        });
+        el.addEventListener('paste', function (e) {
+          e.preventDefault();
+          var text = (e.clipboardData || window.clipboardData).getData('text/plain');
+          document.execCommand('insertText', false, text);
+        });
+        el.addEventListener('click', function (e) {
+          if (el.getAttribute('contenteditable') === 'true') e.preventDefault();
+        });
+      });
+
+      window.addEventListener('message', function (event) {
+        if (event.source !== window.parent || !event.data) return;
+        var d = event.data;
+
+        if (d.type === 'PROMPTTOSITE_TOGGLE_EDIT_MODE') {
+          var active = !!d.active;
+          document.body.classList.toggle('edit-mode-active', active);
+          document.querySelectorAll('.editable-text').forEach(function (el) {
+            el.setAttribute('contenteditable', active ? 'true' : 'false');
+          });
+        }
+        if (d.type === 'PROMPTTOSITE_SET_PALETTE') {
+          if (/^#[0-9a-fA-F]{6}$/.test(d.primary)) document.documentElement.style.setProperty('--primary-color', d.primary);
+          if (/^#[0-9a-fA-F]{6}$/.test(d.accent)) document.documentElement.style.setProperty('--accent-color', d.accent);
+        }
+      });
+    })();
   </script>
 </body>
 </html>`;
