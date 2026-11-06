@@ -140,7 +140,10 @@ async function callTool(name: string, args: Json, origin: string, userId: string
         return text(`Từ chối xuất bản: ${mod.reason}`, true);
       }
       const slug = newSlug();
-      const html = generateLandingPageHtml(config, { leadEndpoint: `/api/leads?site=${slug}` });
+      const html = generateLandingPageHtml(config, {
+        leadEndpoint: `/api/leads?site=${slug}`,
+        privacyUrl: `/s/${slug}/chinh-sach`,
+      });
       await savePublished({
         slug,
         projectId: site?.projectId || projectId,

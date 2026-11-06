@@ -273,11 +273,14 @@ export interface GenerateOptions {
   editMode?: boolean;
   /** Endpoint nhận lead khi trang chạy độc lập (ngoài Studio). */
   leadEndpoint?: string;
+  /** Đường dẫn trang Chính sách bảo mật dữ liệu cá nhân (Luật BVDLCN 91/2025). */
+  privacyUrl?: string;
 }
 
 export function generateLandingPageHtml(cfg: TemplateBlockConfig, options?: GenerateOptions): string {
   const isEditActive = !!options?.editMode;
   const leadEndpoint = options?.leadEndpoint || "/api/leads";
+  const privacyUrl = options?.privacyUrl || "#orderSection";
 
   const brand = escapeHtml(cfg.brandName);
   const tagline = escapeHtml(cfg.tagline);
@@ -514,6 +517,16 @@ export function generateLandingPageHtml(cfg: TemplateBlockConfig, options?: Gene
             <textarea id="note" name="note" rows="3" maxlength="300" placeholder="Bạn quan tâm gói nào hoặc cần thêm thông tin gì..."
               class="focus-brand w-full px-4 py-3 rounded-xl border border-slate-200 text-sm bg-slate-50/60 transition resize-none"></textarea>
           </div>
+          <div class="pt-1">
+            <label class="flex items-start gap-2.5 text-xs text-slate-600 cursor-pointer select-none leading-relaxed">
+              <input id="consentCheck" type="checkbox" name="consent" required checked
+                class="mt-0.5 w-4 h-4 rounded border-slate-300 accent-blue-600 flex-shrink-0">
+              <span>
+                Tôi đồng ý cho <strong>${brand}</strong> liên hệ tư vấn và xử lý dữ liệu theo
+                <a href="${escapeHtml(privacyUrl)}" target="_blank" rel="noopener" class="text-brand underline font-semibold">Chính sách bảo mật</a> (Luật BVDLCN 91/2025).
+              </span>
+            </label>
+          </div>
           <input type="text" name="website" tabindex="-1" autocomplete="off" aria-hidden="true" style="position:absolute;left:-9999px;opacity:0;height:0;width:0">
           <p id="formError" class="hidden text-xs font-semibold text-rose-600"></p>
           <button type="submit" id="submitBtn" class="w-full py-3.5 rounded-xl btn-brand font-bold text-sm shadow-lg hover:shadow-xl hover:brightness-110 transition disabled:opacity-60">Gửi Yêu Cầu Tư Vấn</button>
@@ -562,13 +575,21 @@ export function generateLandingPageHtml(cfg: TemplateBlockConfig, options?: Gene
           var fd = new FormData(form);
           var fullName = String(fd.get('fullName') || '').trim();
           var phone = String(fd.get('phone') || '').replace(/[\\s.\\-]/g, '');
+          var consentEl = document.getElementById('consentCheck');
           if (fullName.length < 2) return showError('Vui lòng nhập họ và tên.');
           if (!/^(\\+84|0)\\d{9,10}$/.test(phone)) return showError('Số điện thoại chưa đúng (VD: 0988123456).');
+          if (consentEl && !consentEl.checked) return showError('Vui lòng đồng ý với Chính sách bảo mật dữ liệu cá nhân.');
 
           function done() { form.classList.add('hidden'); successMsg.classList.remove('hidden'); }
           if (fd.get('website')) return done(); // honeypot: bot
 
-          var lead = { fullName: fullName, phone: phone, note: String(fd.get('note') || '').trim(), brandName: BRAND };
+          var lead = {
+            fullName: fullName,
+            phone: phone,
+            note: String(fd.get('note') || '').trim(),
+            brandName: BRAND,
+            consentAt: new Date().toISOString()
+          };
           submitBtn.disabled = true;
           submitBtn.textContent = 'Đang gửi...';
 

@@ -36,6 +36,7 @@ export async function POST(req: Request) {
     const slug = newSlug();
     const html = generateLandingPageHtml(config, {
       leadEndpoint: `/api/leads?site=${slug}`,
+      privacyUrl: `/s/${slug}/chinh-sach`,
     });
     await savePublished({
       slug,
