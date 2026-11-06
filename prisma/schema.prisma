@@ -1,0 +1,208 @@
+// Prisma Schema cho PromptToSite (Bám sát mục 4 của tai_lieu_dac_ta.md & PLAN_GIAI_DOAN_TIEP_THEO.md)
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// 1. Người dùng & Phân quyền
+model User {
+  id           String        @id @default(uuid())
+  email        String        @unique
+  fullName     String?       @map("full_name")
+  role         String        @default("user") // 'user', 'admin'
+  createdAt    DateTime      @default(now()) @map("created_at")
+
+  projects     Project[]
+  tokens       ApiToken[]
+  subscription Subscription?
+
+  @@map("users")
+}
+
+// 2. Gói cước & Hạn ngạch (Subscriptions & Limits)
+model Subscription {
+  id                 String    @id @default(uuid())
+  userId             String    @unique @map("user_id")
+  planTier           String    @default("free") @map("plan_tier") // 'free', 'starter', 'pro', 'agency'
+  aiCreditsRemaining Int       @default(20) @map("ai_credits_remaining")
+  aiUsedThisMonth    Int       @default(0) @map("ai_used_this_month")
+  leadsThisMonth     Int       @default(0) @map("leads_this_month")
+  maxActiveDomains   Int       @default(0) @map("max_active_domains")
+  currentPeriodEnd   DateTime? @map("current_period_end")
+  status             String    @default("active") // 'active', 'past_due', 'canceled'
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+
+  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("subscriptions")
+}
+
+// 3. Dự án Landing Page (Projects)
+model Project {
+  id               String           @id @default(uuid())
+  userId           String?          @map("user_id")
+  name             String
+  industry         String           @default("spa")
+  subdomain        String?          @unique
+  customDomain     String?          @unique @map("custom_domain")
+  domainVerifyCode String?          @map("domain_verify_code")
+  domainStatus     String           @default("pending") @map("domain_status") // 'pending', 'verified', 'active'
+  publishedHtmlUrl String?          @map("published_html_url")
+  isPublished      Boolean          @default(false) @map("is_published")
+  themeConfig      Json             @default("{}") @map("theme_config")
+  version          Int              @default(1)
+  source           String           @default("studio") // 'studio', 'mcp', 'ai'
+  createdAt        DateTime         @default(now()) @map("created_at")
+  updatedAt        DateTime         @updatedAt @map("updated_at")
+
+  user             User?            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  versions         ProjectVersion[]
+  publishedSites   PublishedSite[]
+  leads            Lead[]
+  integrations     Integration[]
+  events           AnalyticsEvent[]
+  moderationFlags  ModerationFlag[]
+
+  @@index([userId])
+  @@map("projects")
+}
+
+// 4. Lịch sử phiên bản (Project Versions - Hỗ trợ Undo/Redo)
+model ProjectVersion {
+  id            String   @id @default(uuid())
+  projectId     String   @map("project_id")
+  versionNumber Int      @map("version_number")
+  source        String   @default("studio") // 'studio', 'mcp', 'ai'
+  promptHistory String?  @map("prompt_history")
+  configSnapshot Json    @map("config_snapshot")
+  htmlSnapshot  String   @map("html_snapshot")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, versionNumber])
+  @@map("project_versions")
+}
+
+// 5. Trang đã xuất bản (Published Sites)
+model PublishedSite {
+  slug      String   @id
+  projectId String?  @map("project_id")
+  brandName String   @map("brand_name")
+  html      String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  events    AnalyticsEvent[]
+
+  @@index([projectId])
+  @@map("published_sites")
+}
+
+// 6. Thu thập Khách hàng tiềm năng (Leads CRM)
+model Lead {
+  id          String    @id @default(uuid())
+  projectId   String?   @map("project_id")
+  projectName String?   @map("project_name")
+  siteSlug    String?   @map("site_slug")
+  fullName    String    @map("full_name")
+  phone       String
+  note        String?
+  data        Json      @default("{}")
+  ipAddress   String?   @map("ip_address")
+  userAgent   String?   @map("user_agent")
+  status      String    @default("new") // 'new', 'contacted', 'closed'
+  consentAt   DateTime? @map("consent_at")
+  submittedAt String    @map("submitted_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  project     Project?  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, createdAt])
+  @@map("leads")
+}
+
+// 7. Tích hợp Thông báo (Notification Integrations)
+model Integration {
+  id        String   @id @default(uuid())
+  projectId String   @map("project_id")
+  type      String   // 'telegram', 'email', 'webhook'
+  config    Json     // { encryptedToken, chatId, email, webhookUrl, webhookSecret }
+  isActive  Boolean  @default(true) @map("is_active")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, type])
+  @@map("integrations")
+}
+
+// 8. API Token cho MCP (A3)
+model ApiToken {
+  id         String    @id @default(uuid())
+  userId     String    @map("user_id")
+  name       String
+  tokenHash  String    @unique @map("token_hash")
+  tokenHint  String    @map("token_hint")
+  lastUsedAt DateTime? @map("last_used_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  revokedAt  DateTime? @map("revoked_at")
+
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("api_tokens")
+}
+
+// 9. Thống kê sự kiện trang đã xuất bản (C2)
+model AnalyticsEvent {
+  id          String        @id @default(uuid())
+  siteSlug    String        @map("site_slug")
+  projectId   String?       @map("project_id")
+  type        String        // 'pageview', 'cta_click'
+  visitorHash String        @map("visitor_hash")
+  label       String?
+  createdAt   DateTime      @default(now()) @map("created_at")
+
+  site        PublishedSite @relation(fields: [siteSlug], references: [slug], onDelete: Cascade)
+  project     Project?      @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  @@index([siteSlug, createdAt])
+  @@index([projectId, createdAt])
+  @@map("analytics_events")
+}
+
+// 10. Cờ kiểm duyệt nội dung vi phạm (C1)
+model ModerationFlag {
+  id        String   @id @default(uuid())
+  projectId String?  @map("project_id")
+  userId    String?  @map("user_id")
+  reason    String
+  matched   String?
+  snapshot  Json     @default("{}")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  @@map("moderation_flags")
+}
+
+// 11. Giao dịch thanh toán PayOS (D3)
+model BillingOrder {
+  id        String   @id @default(uuid())
+  orderCode Int      @unique @map("order_code")
+  userId    String   @map("user_id")
+  planTier  String   @map("plan_tier")
+  amount    Int
+  status    String   @default("pending") // 'pending', 'paid', 'canceled'
+  createdAt DateTime @default(now()) @map("created_at")
+  paidAt    DateTime? @map("paid_at")
+
+  @@index([userId])
+  @@map("billing_orders")
+}
