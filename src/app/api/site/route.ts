@@ -3,6 +3,8 @@ import { getSite, setSite } from "@/lib/store";
 import { INDUSTRY_PRESETS, normalizeConfig } from "@/lib/blocks/template-engine";
 import { IndustryType } from "@/lib/types";
 
+export const dynamic = "force-dynamic";
+
 // Trạng thái trang đang soạn. Studio và các AI Agent (qua MCP) cùng đọc/ghi để luôn đồng bộ.
 export async function GET() {
   return NextResponse.json({ success: true, site: await getSite() });
