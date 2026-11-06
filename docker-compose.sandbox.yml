@@ -1,0 +1,63 @@
+# ==============================================================================
+# PromptToSite - On-Demand Tenant Sandbox & Caddy TLS Architecture
+# Đề án: Nền tảng Tạo & Xuất bản Landing Page Bán Hàng Tự Động Trong 30 Giây
+# ==============================================================================
+
+version: "3.9"
+
+services:
+  # Cổng Reverse Proxy & Tự động cấp phát chứng chỉ SSL Let's Encrypt theo tên miền riêng
+  caddy-proxy:
+    image: caddy:2.8-alpine
+    container_name: prompttosite_caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - sandbox-mesh
+
+  # Core Next.js Web Studio & MCP Gateway
+  prompttosite-studio:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: prompttosite_studio
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+    ports:
+      - "3000:3000"
+    networks:
+      - sandbox-mesh
+
+  # Mẫu Container Sandbox cô lập cho từng Tenant (Khách hàng)
+  tenant-sandbox-demo:
+    image: node:20-alpine
+    container_name: tenant_sandbox_banmai_spa
+    restart: "no"
+    working_dir: /app
+    volumes:
+      - ./sandbox_storage/tenant_1:/app
+    command: ["sh", "-c", "npx serve -s . -l 8080"]
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 256M
+    networks:
+      - sandbox-mesh
+
+networks:
+  sandbox-mesh:
+    driver: bridge
+
+volumes:
+  caddy_data:
+  caddy_config:
+
