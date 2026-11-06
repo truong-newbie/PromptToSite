@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { Bell, Check, Copy, KeyRound, Loader2, Plug, Plus, Send, ShieldAlert, Trash2, Zap } from "lucide-react";
+import { Bell, Check, Copy, KeyRound, Loader2, Mail, Plug, Plus, Send, ShieldAlert, Trash2, Webhook, Zap } from "lucide-react";
 import { ApiTokenItem } from "@/lib/types";
 
 export interface StudioSettings {
@@ -50,6 +50,17 @@ export function SettingsPanel({ settings, onChange, projectId }: Props) {
   const [creatingToken, setCreatingToken] = useState(false);
   const [newlyCreatedToken, setNewlyCreatedToken] = useState<string | null>(null);
 
+  // Tích hợp Email & Webhook (C3)
+  const [emailRecipient, setEmailRecipient] = useState("");
+  const [emailActive, setEmailActive] = useState(false);
+  const [emailMsg, setEmailMsg] = useState<string | null>(null);
+
+  const [webhookUrl, setWebhookUrl] = useState("");
+  const [webhookSecret, setWebhookSecret] = useState("");
+  const [maskedWebhookSecret, setMaskedWebhookSecret] = useState("");
+  const [webhookActive, setWebhookActive] = useState(false);
+  const [webhookMsg, setWebhookMsg] = useState<string | null>(null);
+
   useEffect(() => {
     setOrigin(window.location.origin);
     fetch("/api/tokens")
@@ -64,6 +75,19 @@ export function SettingsPanel({ settings, onChange, projectId }: Props) {
         if (d.success) {
           setMaskedToken(d.maskedToken || "");
           onChange({ ...settings, telegramToken: "", telegramChatId: d.chatId || "" });
+        }
+      })
+      .catch(() => {});
+
+    fetch(`/api/integrations${qs}`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.success) {
+          setEmailRecipient(d.email?.recipient || "");
+          setEmailActive(Boolean(d.email?.isActive));
+          setWebhookUrl(d.webhook?.url || "");
+          setMaskedWebhookSecret(d.webhook?.maskedSecret || "");
+          setWebhookActive(Boolean(d.webhook?.isActive));
         }
       })
       .catch(() => {});
@@ -258,6 +282,151 @@ export function SettingsPanel({ settings, onChange, projectId }: Props) {
         {testResult && (
           <p className={`text-[11px] font-semibold ${testResult.ok ? "text-emerald-600" : "text-rose-600"}`}>{testResult.message}</p>
         )}
+      </Section>
+
+      {/* Thông báo qua Email (Resend) (C3) */}
+      <Section
+        icon={<Mail className="w-4 h-4 text-emerald-600" />}
+        title="Thông báo khách mới qua Email"
+        desc="Gửi email tự động qua Resend ngay khi có khách đăng ký tư vấn."
+      >
+        <div className="flex items-center justify-between text-xs">
+          <span className="font-semibold text-slate-700">Kích hoạt gửi Email</span>
+          <input
+            type="checkbox"
+            checked={emailActive}
+            onChange={(e) => setEmailActive(e.target.checked)}
+            className="w-4 h-4 accent-blue-600 rounded cursor-pointer"
+          />
+        </div>
+        <div>
+          <Label>Email nhận thông báo</Label>
+          <input
+            type="email"
+            value={emailRecipient}
+            onChange={(e) => setEmailRecipient(e.target.value)}
+            placeholder="cskh@thuonghieu.vn"
+            className="field text-xs"
+          />
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={async () => {
+              const res = await fetch("/api/integrations", {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ projectId, type: "email", recipient: emailRecipient, isActive: emailActive }),
+              });
+              const d = await res.json();
+              setEmailMsg(d.success ? "Đã lưu cấu hình Email." : d.error || "Lưu thất bại");
+            }}
+            className="btn-primary py-2 text-xs"
+          >
+            <Check className="w-3.5 h-3.5" /> Lưu Email
+          </button>
+          <button
+            type="button"
+            disabled={!emailRecipient}
+            onClick={async () => {
+              const res = await fetch("/api/integrations", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ projectId, type: "email", recipient: emailRecipient }),
+              });
+              const d = await res.json();
+              setEmailMsg(d.success ? "Đã gửi email thử nghiệm!" : d.error || "Gửi thử thất bại");
+            }}
+            className="btn-ghost py-2 text-xs disabled:opacity-50"
+          >
+            <Send className="w-3.5 h-3.5" /> Gửi thử
+          </button>
+        </div>
+        {emailMsg && <p className="text-[11px] font-semibold text-emerald-600">{emailMsg}</p>}
+      </Section>
+
+      {/* Đồng bộ Webhook CRM / Google Sheets / n8n (C3) */}
+      <Section
+        icon={<Webhook className="w-4 h-4 text-rose-600" />}
+        title="Đồng bộ Webhook (CRM / Google Sheets / n8n)"
+        desc="Bắn JSON kèm chữ ký HMAC-SHA256 (X-P2S-Signature), tự động thử lại tối đa 3 lần."
+      >
+        <div className="flex items-center justify-between text-xs">
+          <span className="font-semibold text-slate-700">Kích hoạt Webhook</span>
+          <input
+            type="checkbox"
+            checked={webhookActive}
+            onChange={(e) => setWebhookActive(e.target.checked)}
+            className="w-4 h-4 accent-blue-600 rounded cursor-pointer"
+          />
+        </div>
+        <div>
+          <Label>Webhook URL</Label>
+          <input
+            value={webhookUrl}
+            onChange={(e) => setWebhookUrl(e.target.value)}
+            placeholder="https://hooks.zapier.com/... hoặc n8n webhook"
+            className="field font-mono text-xs"
+          />
+        </div>
+        <div>
+          <Label>
+            Khóa ký HMAC Secret {maskedWebhookSecret ? <span className="text-emerald-600 font-mono">({maskedWebhookSecret})</span> : null}
+          </Label>
+          <input
+            type="password"
+            value={webhookSecret}
+            onChange={(e) => setWebhookSecret(e.target.value)}
+            placeholder={maskedWebhookSecret ? "Nhập mới nếu muốn đổi secret..." : "Chuỗi bí mật ký X-P2S-Signature"}
+            className="field font-mono text-xs"
+          />
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={async () => {
+              const res = await fetch("/api/integrations", {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  projectId,
+                  type: "webhook",
+                  url: webhookUrl,
+                  secret: webhookSecret,
+                  isActive: webhookActive,
+                }),
+              });
+              const d = await res.json();
+              if (d.success) {
+                setMaskedWebhookSecret(d.maskedSecret || "");
+                setWebhookSecret("");
+                setWebhookMsg("Đã lưu cấu hình Webhook.");
+              } else {
+                setWebhookMsg(d.error || "Lưu thất bại");
+              }
+            }}
+            className="btn-primary py-2 text-xs"
+          >
+            <Check className="w-3.5 h-3.5" /> Lưu Webhook
+          </button>
+          <button
+            type="button"
+            disabled={!webhookUrl}
+            onClick={async () => {
+              const res = await fetch("/api/integrations", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ projectId, type: "webhook", url: webhookUrl, secret: webhookSecret }),
+              });
+              const d = await res.json();
+              setWebhookMsg(d.success ? "Đã bắn thử Webhook thành công!" : d.error || "Gửi thử thất bại");
+            }}
+            className="btn-ghost py-2 text-xs disabled:opacity-50"
+          >
+            <Send className="w-3.5 h-3.5" /> Bắn thử
+          </button>
+        </div>
+        {webhookMsg && <p className="text-[11px] font-semibold text-emerald-600">{webhookMsg}</p>}
       </Section>
 
       <Section

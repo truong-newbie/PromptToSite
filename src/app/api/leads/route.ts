@@ -4,6 +4,7 @@ import { addLead, getLeads, getProjectIntegration, getPublished, getSite } from 
 import { decryptSecret } from "@/lib/crypto";
 import { getCurrentUser } from "@/lib/auth";
 import { checkRateLimit } from "@/lib/ratelimit";
+import { dispatchLeadWebhook, sendEmailLeadNotification } from "@/lib/notifications";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -69,6 +70,26 @@ export async function POST(req: Request) {
     });
 
     const telegramNotification = await sendTelegramNotification(lead, botToken, chatId);
+
+    // Gửi thông báo Email & Webhook bất đồng bộ (không chặn phản hồi form của khách) (C3)
+    void (async () => {
+      try {
+        const [emailInt, webhookInt] = await Promise.all([
+          getProjectIntegration(projectId, "email"),
+          getProjectIntegration(projectId, "webhook"),
+        ]);
+        if (emailInt?.isActive && emailInt.config?.recipient) {
+          await sendEmailLeadNotification(lead, String(emailInt.config.recipient));
+        }
+        if (webhookInt?.isActive && webhookInt.config?.url) {
+          const encSec = String(webhookInt.config.encryptedSecret || "");
+          const sec = encSec ? decryptSecret(encSec) : "";
+          await dispatchLeadWebhook(lead, String(webhookInt.config.url), sec, 3);
+        }
+      } catch {
+        // Không làm ảnh hưởng luồng chính
+      }
+    })();
 
     return NextResponse.json(
       { success: true, lead, telegramNotification, totalLeads: (await getLeads({ projectId })).length },
