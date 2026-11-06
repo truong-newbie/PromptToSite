@@ -71,6 +71,7 @@ export default function StudioPage() {
 
   // CRM Leads
   const [leads, setLeads] = useState<LeadSubmission[]>([]);
+  const [leadSearch, setLeadSearch] = useState<string>("");
   const [newLeadAlert, setNewLeadAlert] = useState<LeadSubmission | null>(null);
 
   // Settings: Telegram & API Provider
@@ -85,10 +86,20 @@ export default function StudioPage() {
 
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
-  // Khởi tạo HTML ban đầu
+  // Khởi tạo HTML ban đầu & tải danh sách Leads đã lưu
   useEffect(() => {
     const initialHtml = generateLandingPageHtml(INDUSTRY_PRESETS.spa, { editMode: false });
     setHtmlContent(initialHtml);
+
+    // Tải danh sách leads bền vững từ backend
+    fetch("/api/leads")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.success && Array.isArray(data.leads)) {
+          setLeads(data.leads);
+        }
+      })
+      .catch(() => {});
   }, []);
 
   // Lắng nghe sự kiện từ iframe (Bắt Lead & Click-to-Edit)
@@ -501,6 +512,26 @@ export default function StudioPage() {
                 </span>
               </div>
 
+              {/* Thanh công cụ: Tìm kiếm & Xuất Excel/CSV */}
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  placeholder="Tìm theo tên hoặc SĐT..."
+                  value={leadSearch}
+                  onChange={(e) => setLeadSearch(e.target.value)}
+                  className="flex-1 px-3 py-1.5 text-xs border border-slate-200 rounded-lg bg-slate-50 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                />
+                <a
+                  href="/api/leads?export=csv"
+                  download
+                  className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center gap-1 shadow-sm transition"
+                  title="Xuất file Excel / CSV (chuẩn UTF-8 Tiếng Việt)"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Excel</span>
+                </a>
+              </div>
+
               {leads.length === 0 ? (
                 <div className="text-center py-12 text-slate-400 space-y-2">
                   <div className="text-3xl">📭</div>
@@ -510,25 +541,32 @@ export default function StudioPage() {
                   </p>
                 </div>
               ) : (
-                leads.map((l) => (
-                  <div key={l.id} className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1.5 text-xs shadow-sm">
-                    <div className="flex items-center justify-between font-bold text-slate-900">
-                      <span>👤 {l.fullName}</span>
-                      <span className="text-[10px] text-slate-400 font-normal">{l.submittedAt}</span>
+                leads
+                  .filter(
+                    (l) =>
+                      l.fullName.toLowerCase().includes(leadSearch.toLowerCase()) ||
+                      l.phone.includes(leadSearch) ||
+                      (l.note && l.note.toLowerCase().includes(leadSearch.toLowerCase()))
+                  )
+                  .map((l) => (
+                    <div key={l.id} className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1.5 text-xs shadow-sm">
+                      <div className="flex items-center justify-between font-bold text-slate-900">
+                        <span>👤 {l.fullName}</span>
+                        <span className="text-[10px] text-slate-400 font-normal">{l.submittedAt}</span>
+                      </div>
+                      <div className="text-blue-600 font-mono font-bold flex items-center justify-between">
+                        <span>📞 {l.phone}</span>
+                        <a
+                          href={`tel:${l.phone}`}
+                          className="text-[10px] bg-blue-50 text-blue-700 px-2 py-0.5 rounded border border-blue-200 hover:bg-blue-100 flex items-center gap-1"
+                        >
+                          <PhoneCall className="w-3 h-3" />
+                          <span>Gọi ngay</span>
+                        </a>
+                      </div>
+                      {l.note && <p className="text-slate-600 text-[11px]">📝 {l.note}</p>}
                     </div>
-                    <div className="text-blue-600 font-mono font-bold flex items-center justify-between">
-                      <span>📞 {l.phone}</span>
-                      <a
-                        href={`tel:${l.phone}`}
-                        className="text-[10px] bg-blue-50 text-blue-700 px-2 py-0.5 rounded border border-blue-200 hover:bg-blue-100 flex items-center gap-1"
-                      >
-                        <PhoneCall className="w-3 h-3" />
-                        <span>Gọi ngay</span>
-                      </a>
-                    </div>
-                    {l.note && <p className="text-slate-600 text-[11px]">📝 {l.note}</p>}
-                  </div>
-                ))
+                  ))
               )}
             </div>
           )}
