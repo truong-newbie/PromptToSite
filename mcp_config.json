@@ -1,13 +1,13 @@
 {
   "$schema": "https://json.schemastore.org/mcp-config.json",
   "mcpServers": {
-    "prompttosite-server": {
+    "prompttosite": {
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-fetch", "http://localhost:3000/api/mcp"],
-      "env": {
-        "PROMPTTOSITE_ENDPOINT": "http://localhost:3000/api/mcp"
-      }
+      "args": [
+        "-y",
+        "mcp-remote",
+        "http://localhost:3000/api/mcp"
+      ]
     }
   }
 }
-
