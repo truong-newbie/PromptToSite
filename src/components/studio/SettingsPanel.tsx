@@ -36,10 +36,12 @@ const Label = ({ children }: { children: React.ReactNode }) => (
   <label className="block text-[11px] font-semibold text-slate-600 mb-1.5">{children}</label>
 );
 
-export function SettingsPanel({ settings, onChange }: Props) {
+export function SettingsPanel({ settings, onChange, projectId }: Props) {
   const [origin, setOrigin] = useState("http://localhost:3000");
   const [copied, setCopied] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
+  const [savingTg, setSavingTg] = useState(false);
+  const [maskedToken, setMaskedToken] = useState("");
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
 
   // Quản lý MCP Token (A3)
@@ -54,7 +56,19 @@ export function SettingsPanel({ settings, onChange }: Props) {
       .then((r) => r.json())
       .then((d) => d.success && Array.isArray(d.tokens) && setTokens(d.tokens))
       .catch(() => {});
-  }, []);
+
+    const qs = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
+    fetch(`/api/integrations/telegram${qs}`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.success) {
+          setMaskedToken(d.maskedToken || "");
+          onChange({ ...settings, telegramToken: "", telegramChatId: d.chatId || "" });
+        }
+      })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId]);
 
   const set = <K extends keyof StudioSettings>(key: K, value: StudioSettings[K]) => onChange({ ...settings, [key]: value });
 
@@ -92,6 +106,35 @@ export function SettingsPanel({ settings, onChange }: Props) {
     setTokens((prev) => prev.map((t) => (t.id === id ? { ...t, revokedAt: new Date().toISOString() } : t)));
   };
 
+  const saveTelegramServer = async () => {
+    setSavingTg(true);
+    setTestResult(null);
+    try {
+      const res = await fetch("/api/integrations/telegram", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId,
+          botToken: settings.telegramToken,
+          chatId: settings.telegramChatId,
+          isActive: true,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setMaskedToken(data.maskedToken || "");
+        onChange({ ...settings, telegramToken: "" });
+        setTestResult({ ok: true, message: "Đã mã hóa AES-256-GCM và lưu cấu hình trên máy chủ." });
+      } else {
+        setTestResult({ ok: false, message: data.error || "Lưu thất bại" });
+      }
+    } catch {
+      setTestResult({ ok: false, message: "Không kết nối được máy chủ." });
+    } finally {
+      setSavingTg(false);
+    }
+  };
+
   const testTelegram = async () => {
     setTesting(true);
     setTestResult(null);
@@ -99,7 +142,11 @@ export function SettingsPanel({ settings, onChange }: Props) {
       const res = await fetch("/api/telegram-test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ botToken: settings.telegramToken, chatId: settings.telegramChatId }),
+        body: JSON.stringify({
+          projectId,
+          botToken: settings.telegramToken,
+          chatId: settings.telegramChatId,
+        }),
       });
       const data = await res.json();
       setTestResult(data.success ? { ok: true, message: "Đã gửi tin thử, hãy kiểm tra Telegram của bạn." } : { ok: false, message: data.error || "Gửi thất bại" });
@@ -165,14 +212,17 @@ export function SettingsPanel({ settings, onChange }: Props) {
       <Section
         icon={<Bell className="w-4 h-4 text-blue-600" />}
         title="Thông báo khách mới qua Telegram"
-        desc="Chat với @BotFather để lấy Bot Token, chat với @userinfobot để lấy Chat ID."
+        desc="Được mã hóa AES-256-GCM và lưu trên máy chủ theo từng dự án. Không còn lưu trong localStorage."
       >
         <div>
-          <Label>Bot Token</Label>
+          <Label>
+            Bot Token {maskedToken ? <span className="text-emerald-600 font-mono">(Đã lưu: {maskedToken})</span> : null}
+          </Label>
           <input
+            type="password"
             value={settings.telegramToken}
             onChange={(e) => set("telegramToken", e.target.value)}
-            placeholder="7123456789:AAH..."
+            placeholder={maskedToken ? "Nhập mới nếu muốn thay đổi token..." : "7123456789:AAH..."}
             autoComplete="off"
             className="field font-mono text-xs"
           />
@@ -187,14 +237,24 @@ export function SettingsPanel({ settings, onChange }: Props) {
             className="field font-mono text-xs"
           />
         </div>
-        <button
-          onClick={testTelegram}
-          disabled={testing || !settings.telegramToken || !settings.telegramChatId}
-          className="btn-ghost w-full py-2.5 text-xs disabled:opacity-50"
-        >
-          {testing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
-          Gửi tin nhắn thử
-        </button>
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            onClick={saveTelegramServer}
+            disabled={savingTg || (!settings.telegramToken && !settings.telegramChatId)}
+            className="btn-primary py-2.5 text-xs disabled:opacity-50"
+          >
+            {savingTg ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+            Lưu cấu hình
+          </button>
+          <button
+            onClick={testTelegram}
+            disabled={testing || ((!settings.telegramToken && !maskedToken) || !settings.telegramChatId)}
+            className="btn-ghost py-2.5 text-xs disabled:opacity-50"
+          >
+            {testing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+            Gửi tin thử
+          </button>
+        </div>
         {testResult && (
           <p className={`text-[11px] font-semibold ${testResult.ok ? "text-emerald-600" : "text-rose-600"}`}>{testResult.message}</p>
         )}

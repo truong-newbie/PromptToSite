@@ -45,7 +45,6 @@ type Tab = "chat" | "crm" | "settings";
 type ToastState = { text: string; tone: "ok" | "error" } | null;
 
 const DEVICE_WIDTH: Record<Device, string> = { desktop: "100%", tablet: "768px", mobile: "390px" };
-const TELEGRAM_STORAGE_KEY = "p2s.telegram";
 
 const WELCOME: ChatMessage = {
   role: "assistant",
@@ -115,16 +114,6 @@ export default function StudioPage() {
 
   // ---------- Nạp dữ liệu ban đầu ----------
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(TELEGRAM_STORAGE_KEY);
-      if (raw) {
-        const t = JSON.parse(raw);
-        setSettings((s) => ({ ...s, telegramToken: String(t.token || ""), telegramChatId: String(t.chatId || "") }));
-      }
-    } catch {
-      /* bỏ qua dữ liệu lưu hỏng */
-    }
-
     fetch("/api/auth")
       .then((r) => r.json())
       .then((d) => d.user && setCurrentUser({ fullName: d.user.fullName, email: d.user.email }))
@@ -149,16 +138,6 @@ export default function StudioPage() {
         hydrated.current = true;
       });
   }, [loadPage]);
-
-  useEffect(() => {
-    try {
-      if (settings.telegramToken || settings.telegramChatId) {
-        localStorage.setItem(TELEGRAM_STORAGE_KEY, JSON.stringify({ token: settings.telegramToken, chatId: settings.telegramChatId }));
-      }
-    } catch {
-      /* localStorage bị chặn */
-    }
-  }, [settings.telegramToken, settings.telegramChatId]);
 
   // ---------- Đồng bộ trang đang soạn lên máy chủ (để MCP đọc được) ----------
   useEffect(() => {
@@ -223,7 +202,7 @@ export default function StudioPage() {
       if (event.source !== iframeRef.current?.contentWindow || !event.data) return;
 
       if (event.data.type === "PROMPTTOSITE_LEAD_SUBMITTED") {
-        const { settings: s, config: c } = latest.current;
+        const { config: c } = latest.current;
         const p = event.data.payload || {};
         try {
           const res = await fetch("/api/leads", {
@@ -234,8 +213,7 @@ export default function StudioPage() {
               phone: p.phone,
               note: p.note,
               brandName: p.brandName || c.brandName,
-              botToken: s.telegramToken,
-              chatId: s.telegramChatId,
+              consentAt: p.consentAt,
             }),
           });
           const data = await res.json();
@@ -345,7 +323,7 @@ export default function StudioPage() {
       const res = await fetch("/api/publish", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ config, botToken: settings.telegramToken, chatId: settings.telegramChatId }),
+        body: JSON.stringify({ config }),
       });
       const data = await res.json();
       if (!res.ok || !data.success) throw new Error(data.error || "Máy chủ từ chối yêu cầu");

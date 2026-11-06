@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 import { sendTelegramNotification } from "@/lib/telegram";
-import { addLead, getLeads, getPublished } from "@/lib/store";
+import { addLead, getLeads, getProjectIntegration, getPublished, getSite } from "@/lib/store";
+import { decryptSecret } from "@/lib/crypto";
+import { getCurrentUser } from "@/lib/auth";
 
-// Giới hạn tần suất đơn giản theo IP (đủ cho MVP; production nên dùng Redis).
+// Giới hạn tần suất đơn giản theo IP (đủ cho MVP; production dùng Upstash Redis qua ratelimit.ts).
 const hits = new Map<string, number[]>();
 function rateLimited(ip: string): boolean {
   const now = Date.now();
@@ -13,7 +15,6 @@ function rateLimited(ip: string): boolean {
   return recent.length > 10;
 }
 
-// Trang xuất bản có thể chạy ở domain khác nên endpoint nhận lead cần CORS. Chỉ áp dụng cho POST.
 const CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
@@ -46,23 +47,40 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Số điện thoại không hợp lệ." }, { status: 400, headers: CORS });
     }
 
-    // Thông tin Telegram: lấy từ trang đã xuất bản (?site=slug), hoặc do Studio gửi lên khi demo.
-    const siteSlug = new URL(req.url).searchParams.get("site");
+    const siteSlug = new URL(req.url).searchParams.get("site") || undefined;
     const published = siteSlug ? await getPublished(siteSlug) : null;
-    const botToken = published?.telegram?.botToken ?? (typeof body.botToken === "string" ? body.botToken : undefined);
-    const chatId = published?.telegram?.chatId ?? (typeof body.chatId === "string" ? body.chatId : undefined);
+    const currentSite = !published ? await getSite(body.projectId) : null;
+    const projectId = published?.projectId || body.projectId || currentSite?.projectId || "proj_default";
+
+    // Tra cứu cấu hình Telegram đã mã hóa từ phía máy chủ theo projectId (A4)
+    let botToken: string | undefined;
+    let chatId: string | undefined;
+    const tgIntegration = await getProjectIntegration(projectId, "telegram");
+    if (tgIntegration && tgIntegration.isActive && tgIntegration.config) {
+      const enc = String(tgIntegration.config.encryptedToken || "");
+      botToken = enc ? decryptSecret(enc) : undefined;
+      chatId = tgIntegration.config.chatId ? String(tgIntegration.config.chatId) : undefined;
+    }
+    // Hỗ trợ tương thích ngược nếu bản xuất bản cũ có lưu telegram
+    if (!botToken && published?.telegram?.botToken) botToken = published.telegram.botToken;
+    if (!chatId && published?.telegram?.chatId) chatId = published.telegram.chatId;
 
     const lead = await addLead({
-      projectName: brandName || published?.brandName || "Landing Page Bán Hàng",
+      projectId,
+      projectName: brandName || published?.brandName || currentSite?.name || "Landing Page Bán Hàng",
+      siteSlug,
       fullName,
       phone,
       note,
+      consentAt: body.consentAt || new Date().toISOString(),
+      ipAddress: ip,
+      userAgent: req.headers.get("user-agent") || undefined,
     });
 
     const telegramNotification = await sendTelegramNotification(lead, botToken, chatId);
 
     return NextResponse.json(
-      { success: true, lead, telegramNotification, totalLeads: (await getLeads()).length },
+      { success: true, lead, telegramNotification, totalLeads: (await getLeads({ projectId })).length },
       { headers: CORS }
     );
   } catch (err: any) {
@@ -79,8 +97,10 @@ function csvCell(value: unknown): string {
 
 export async function GET(req: Request) {
   try {
+    const user = await getCurrentUser();
     const { searchParams } = new URL(req.url);
-    const leads = await getLeads();
+    const projectId = searchParams.get("projectId") || undefined;
+    const leads = await getLeads({ projectId, userId: user?.id });
 
     if (searchParams.get("export") === "csv") {
       const header = ["STT", "Thời Gian Đăng Ký", "Họ Và Tên", "Số Điện Thoại", "Ghi Chú Nhu Cầu", "Dự Án / Thương Hiệu"]
@@ -89,8 +109,7 @@ export async function GET(req: Request) {
       const rows = leads.map((l, i) =>
         [i + 1, l.submittedAt, l.fullName, `'${l.phone}`, l.note, l.projectName].map(csvCell).join(",")
       );
-      // BOM UTF-8 giúp Excel hiển thị đúng tiếng Việt.
-      const csv = "﻿" + [header, ...rows].join("\r\n") + "\r\n";
+      const csv = "\uFEFF" + [header, ...rows].join("\r\n") + "\r\n";
 
       return new NextResponse(csv, {
         status: 200,
