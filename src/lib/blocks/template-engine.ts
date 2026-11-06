@@ -375,7 +375,7 @@ export function generateLandingPageHtml(cfg: TemplateBlockConfig, options?: Gene
 </head>
 <body class="antialiased pb-16 md:pb-0 ${isEditActive ? "edit-mode-active" : ""}">
 
-  <div class="edit-mode-badge fixed top-16 left-1/2 -translate-x-1/2 z-50 bg-slate-900 text-white text-xs font-semibold px-3.5 py-2 rounded-full shadow-xl items-center gap-2 whitespace-nowrap">
+  <div class="edit-mode-badge fixed bottom-20 md:bottom-5 left-1/2 -translate-x-1/2 z-50 bg-slate-900 text-white text-xs font-semibold px-3.5 py-2 rounded-full shadow-xl items-center gap-2 whitespace-nowrap">
     <span class="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
     <span>Chế độ Sửa Nhanh: bấm vào văn bản để chỉnh trực tiếp</span>
   </div>
