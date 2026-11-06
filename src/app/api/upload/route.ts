@@ -4,6 +4,8 @@ import path from "path";
 import crypto from "crypto";
 import { getCurrentUser } from "@/lib/auth";
 
+export const dynamic = "force-dynamic";
+
 const MAX_BYTES = 3 * 1024 * 1024; // 3 MB
 const ALLOWED_MIMES: Record<string, string> = {
   "image/jpeg": "jpg",

@@ -441,16 +441,23 @@ export default function StudioPage() {
       {/* ============================ THANH TRÊN ============================ */}
       <header className="h-14 glass border-b border-slate-200/70 px-3 sm:px-5 flex items-center justify-between gap-3 flex-shrink-0 z-30">
         <div className="flex items-center gap-2.5 min-w-0">
-          <PromptToSiteLogo className="w-8 h-8" />
-          <div className="min-w-0 leading-tight">
-            <div className="flex items-center gap-2">
-              <span className="font-extrabold text-slate-900 tracking-tight">
-                Prompt<span className="text-blue-600">ToSite</span>
-              </span>
-              <span className="hidden sm:inline text-[10px] font-bold text-blue-700 bg-blue-50 ring-1 ring-blue-200 px-1.5 py-0.5 rounded-md">MVP</span>
+          <Link href="/showcase" className="flex items-center gap-2.5 group select-none" title="Xem giới thiệu đề án PromptToSite">
+            <PromptToSiteLogo className="w-8 h-8 group-hover:scale-105 transition-transform" />
+            <div className="min-w-0 leading-tight">
+              <div className="flex items-center gap-2">
+                <span className="font-extrabold text-slate-900 tracking-tight text-sm sm:text-base">
+                  Prompt<span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-cyan-600">ToSite</span>
+                </span>
+                <span className="hidden sm:inline-flex items-center gap-1.5 text-[10px] font-bold text-slate-700 bg-slate-100/90 border border-slate-200/90 px-2 py-0.5 rounded-full shadow-xs">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                  <span>AI Studio</span>
+                </span>
+              </div>
+              <p className="text-[10px] text-slate-400 font-medium hidden md:block truncate">
+                Từ prompt đến landing page bán hàng trong 30 giây
+              </p>
             </div>
-            <p className="text-[10px] text-slate-400 hidden md:block truncate">Từ câu lệnh đến landing page bán hàng trong 30 giây</p>
-          </div>
+          </Link>
         </div>
 
         <div className="hidden lg:flex items-center gap-0.5 bg-slate-100 p-1 rounded-xl ring-1 ring-slate-200/70" role="tablist" aria-label="Kích thước xem trước">

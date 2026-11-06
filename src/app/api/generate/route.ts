@@ -3,6 +3,8 @@ import { INDUSTRY_PRESETS, generateLandingPageHtml, normalizeConfig, TemplateBlo
 import { detectIndustry, extractSemanticConfig } from "@/lib/industry";
 import { IndustryType } from "@/lib/types";
 
+export const dynamic = "force-dynamic";
+
 const CRO_SYSTEM_PROMPT = `Bạn là một Giám đốc Tối ưu Tỷ lệ Chuyển đổi (CRO Expert) và Chuyên gia Copywriting bán hàng hàng đầu tại Việt Nam.
 Nhiệm vụ của bạn là nhận câu lệnh (prompt) từ người dùng và tạo ra một cấu trúc nội dung Landing Page bán hàng đạt chuẩn AIDA (Attention - Interest - Desire - Action) nhằm tối đa hóa tỷ lệ chuyển đổi khách để lại thông tin (Lead Conversion).
 

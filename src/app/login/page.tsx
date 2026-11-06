@@ -45,15 +45,17 @@ export default function LoginPage() {
     <div className="min-h-screen bg-slate-50 flex flex-col justify-center items-center px-4 py-12">
       <div className="w-full max-w-md bg-white rounded-3xl border border-slate-200/90 shadow-xl p-8 space-y-6">
         <div className="flex flex-col items-center text-center space-y-2">
-          <Link href="/showcase" className="inline-flex items-center gap-2.5">
-            <PromptToSiteLogo className="w-10 h-10" />
+          <Link href="/showcase" className="inline-flex items-center gap-2.5 group">
+            <PromptToSiteLogo className="w-12 h-12 group-hover:scale-105 transition-transform" />
           </Link>
-          <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight pt-2">
-            Đăng nhập vào PromptToSite
-          </h1>
-          <p className="text-xs text-slate-500 max-w-xs">
-            Quản lý các dự án Landing Page, khách hàng tiềm năng (CRM) và cấu hình xuất bản riêng biệt.
-          </p>
+          <div className="pt-1">
+            <h1 className="text-2xl font-black text-slate-900 tracking-tight">
+              Prompt<span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-cyan-600">ToSite</span>
+            </h1>
+            <p className="text-xs text-slate-500 max-w-xs mt-1">
+              Quản lý các dự án Landing Page, khách hàng tiềm năng (CRM) và tích hợp đa nền tảng
+            </p>
+          </div>
         </div>
 
         {/* Nút Dùng thử nhanh cho BGK / Demo */}

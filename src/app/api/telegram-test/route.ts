@@ -4,6 +4,8 @@ import { getProjectIntegration, getSite } from "@/lib/store";
 import { decryptSecret } from "@/lib/crypto";
 import { getCurrentUser } from "@/lib/auth";
 
+export const dynamic = "force-dynamic";
+
 // Gửi tin thử để người dùng kiểm tra cấu hình Telegram (không lưu vào CRM).
 export async function POST(req: Request) {
   try {

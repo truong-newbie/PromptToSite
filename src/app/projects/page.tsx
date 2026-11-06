@@ -101,14 +101,21 @@ export default function ProjectsPage() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800">
-      <header className="h-16 bg-white border-b border-slate-200 px-6 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <PromptToSiteLogo className="w-8 h-8" />
+      <header className="h-16 bg-white/95 backdrop-blur-md border-b border-slate-200/80 px-6 flex items-center justify-between sticky top-0 z-40">
+        <Link href="/" className="flex items-center gap-3 group">
+          <PromptToSiteLogo className="w-9 h-9 group-hover:scale-105 transition-transform" />
           <div>
-            <h1 className="text-sm font-extrabold text-slate-900">Quản lý Dự án Landing Page</h1>
-            <p className="text-[11px] text-slate-400">Mỗi dự án có cấu hình giao diện, lịch sử và danh sách khách hàng riêng</p>
+            <div className="flex items-center gap-2">
+              <span className="font-extrabold text-slate-900 tracking-tight text-sm">
+                Prompt<span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-cyan-600">ToSite</span>
+              </span>
+              <span className="text-[10px] font-bold text-slate-600 bg-slate-100 px-2 py-0.5 rounded-full border border-slate-200">
+                Workspace
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-400 font-medium">Quản lý các dự án Landing Page & khách hàng tiềm năng</p>
           </div>
-        </div>
+        </Link>
         <Link href="/" className="btn-primary px-4 py-2 text-xs">
           Quay lại Web Studio
         </Link>
@@ -238,3 +245,4 @@ export default function ProjectsPage() {
     </div>
   );
 }
+

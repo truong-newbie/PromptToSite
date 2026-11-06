@@ -4,6 +4,8 @@ import { getSite, logModerationFlag, newSlug, savePublished } from "@/lib/store"
 import { getCurrentUser } from "@/lib/auth";
 import { moderateLandingPage } from "@/lib/moderation";
 
+export const dynamic = "force-dynamic";
+
 // Xuất bản: kiểm duyệt chống giả mạo (C1), dựng HTML tĩnh, lưu lại và phục vụ tại /s/{slug}.
 export async function POST(req: Request) {
   try {
