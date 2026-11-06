@@ -347,17 +347,17 @@ export default function StudioPage() {
         <div className="flex items-center gap-2">
           <Link
             href="/showcase"
-            className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-300 hover:border-amber-400 text-amber-800 hover:text-amber-900 text-xs font-bold flex items-center gap-1.5 transition shadow-sm"
+            className="px-3 py-1.5 rounded-lg bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-700 text-xs font-bold flex items-center gap-1.5 transition shadow-sm"
             title="Xem trang giới thiệu đề án & tầm nhìn tương lai dành cho Ban Giám Khảo"
           >
-            <Award className="w-3.5 h-3.5 text-amber-600" />
+            <Award className="w-3.5 h-3.5 text-blue-600" />
             <span className="hidden sm:inline">Giới Thiệu Đề Án (BGK)</span>
             <span className="sm:hidden">Đề Án</span>
           </Link>
 
           <button
             onClick={handleExportZip}
-            className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold flex items-center gap-1.5 transition shadow-sm"
+            className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold flex items-center gap-1.5 transition shadow-sm"
           >
             <Download className="w-3.5 h-3.5 text-slate-500" />
             <span className="hidden sm:inline">Tải ZIP (.zip)</span>
@@ -365,7 +365,7 @@ export default function StudioPage() {
 
           <button
             onClick={handlePublish}
-            className="px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold flex items-center gap-1.5 transition shadow-md shadow-blue-600/25"
+            className="px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold flex items-center gap-1.5 transition shadow-md shadow-blue-600/20"
           >
             <Globe className="w-3.5 h-3.5" />
             <span>Xuất bản 1-Click</span>
@@ -452,40 +452,40 @@ export default function StudioPage() {
                 )}
               </div>
 
-              {/* Gợi ý Prompt nhanh theo ngành */}
+              {/* Gợi ý Prompt nhanh theo ngành (Tối giản, chuyên nghiệp) */}
               <div className="p-3 bg-slate-50 border-t border-slate-200">
-                <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1">
-                  <Flame className="w-3 h-3 text-amber-500" />
-                  <span>Prompt Mẫu Nhanh (Thử nghiệm 1-click):</span>
+                <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-blue-600"></span>
+                  <span>Ngành Nghề Mẫu (Thử Nghiệm Nhanh):</span>
                 </p>
                 <div className="grid grid-cols-2 gap-2 text-xs">
                   <button
                     onClick={() => handleGenerate("Tạo Landing Page cho Viện Thẩm Mỹ Ban Mai, giảm 40%, có form đặt hẹn")}
-                    className="p-2 rounded-lg bg-white border border-slate-200 hover:border-teal-500 text-left hover:bg-teal-50/50 transition"
+                    className="p-2.5 rounded-xl bg-white border border-slate-200 hover:border-blue-500 hover:bg-blue-50/30 text-left transition shadow-[0_1px_2px_rgba(0,0,0,0.03)]"
                   >
-                    <span className="font-bold text-teal-800 block text-[11px]">💆 Thẩm Mỹ & Spa</span>
-                    <span className="text-[10px] text-slate-500 line-clamp-1">Giảm béo, cam kết hoàn tiền</span>
+                    <span className="font-semibold text-slate-900 block text-xs">Thẩm Mỹ & Spa</span>
+                    <span className="text-[10px] text-slate-500 line-clamp-1 mt-0.5">Giảm béo, cam kết văn bản</span>
                   </button>
                   <button
                     onClick={() => handleGenerate("Tạo trang bán cà phê The Mộc rang xay nguyên bản, mua 1 tặng 1")}
-                    className="p-2 rounded-lg bg-white border border-slate-200 hover:border-amber-500 text-left hover:bg-amber-50/50 transition"
+                    className="p-2.5 rounded-xl bg-white border border-slate-200 hover:border-blue-500 hover:bg-blue-50/30 text-left transition shadow-[0_1px_2px_rgba(0,0,0,0.03)]"
                   >
-                    <span className="font-bold text-amber-900 block text-[11px]">☕ Quán Cà Phê Mộc</span>
-                    <span className="text-[10px] text-slate-500 line-clamp-1">Mua 1 tặng 1 tuần ra mắt</span>
+                    <span className="font-semibold text-slate-900 block text-xs">Cà Phê Mộc Rang Tay</span>
+                    <span className="text-[10px] text-slate-500 line-clamp-1 mt-0.5">Mua 1 tặng 1 tuần ra mắt</span>
                   </button>
                   <button
                     onClick={() => handleGenerate("Tạo landing page khóa học AI Marketing NextGen, học bổng 50%")}
-                    className="p-2 rounded-lg bg-white border border-slate-200 hover:border-blue-500 text-left hover:bg-blue-50/50 transition"
+                    className="p-2.5 rounded-xl bg-white border border-slate-200 hover:border-blue-500 hover:bg-blue-50/30 text-left transition shadow-[0_1px_2px_rgba(0,0,0,0.03)]"
                   >
-                    <span className="font-bold text-blue-800 block text-[11px]">🎓 Khóa Học Kỹ Năng AI</span>
-                    <span className="text-[10px] text-slate-500 line-clamp-1">Trợ giá 50%, kèm cặp 1:1</span>
+                    <span className="font-semibold text-slate-900 block text-xs">Đào Tạo Kỹ Năng AI</span>
+                    <span className="text-[10px] text-slate-500 line-clamp-1 mt-0.5">Trợ giá 50%, kèm 1:1</span>
                   </button>
                   <button
                     onClick={() => handleGenerate("Tạo trang bộ sưu tập thời trang nữ L'AURA Boutique, giảm 30%")}
-                    className="p-2 rounded-lg bg-white border border-slate-200 hover:border-rose-500 text-left hover:bg-rose-50/50 transition"
+                    className="p-2.5 rounded-xl bg-white border border-slate-200 hover:border-blue-500 hover:bg-blue-50/30 text-left transition shadow-[0_1px_2px_rgba(0,0,0,0.03)]"
                   >
-                    <span className="font-bold text-rose-800 block text-[11px]">👗 Thời Trang Nữ Chic</span>
-                    <span className="text-[10px] text-slate-500 line-clamp-1">Lụa cao cấp, đổi trả 7 ngày</span>
+                    <span className="font-semibold text-slate-900 block text-xs">Thời Trang Tối Giản</span>
+                    <span className="text-[10px] text-slate-500 line-clamp-1 mt-0.5">Lụa cao cấp, đổi size 7 ngày</span>
                   </button>
                 </div>
               </div>
