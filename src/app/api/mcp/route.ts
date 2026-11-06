@@ -4,20 +4,10 @@ import { detectIndustry } from "@/lib/industry";
 import { getLeads, getSite, newSlug, savePublished, setSite, verifyApiToken } from "@/lib/store";
 import { IndustryType } from "@/lib/types";
 import { getCurrentUser } from "@/lib/auth";
+import { checkRateLimit } from "@/lib/ratelimit";
 
 const PROTOCOL_VERSION = "2024-11-05";
 const SERVER_INFO = { name: "PromptToSite MCP Server", version: "1.2.0" };
-
-// Giới hạn tần suất 60 yêu cầu / phút / token (A3)
-const mcpHits = new Map<string, number[]>();
-function isTokenRateLimited(tokenKey: string): boolean {
-  const now = Date.now();
-  const recent = (mcpHits.get(tokenKey) || []).filter((t) => now - t < 60_000);
-  recent.push(now);
-  mcpHits.set(tokenKey, recent);
-  if (mcpHits.size > 2000) mcpHits.clear();
-  return recent.length > 60;
-}
 
 const EDITABLE_FIELDS = [
   "brandName", "tagline", "headline", "subheadline", "discountText", "hotline", "primaryColorHex", "accentColorHex",
@@ -206,7 +196,8 @@ export async function POST(req: Request) {
       userId = sessionUser.id;
     }
 
-    if (isTokenRateLimited(rateKey)) {
+    const rl = await checkRateLimit(`mcp:${rateKey}`, 60, 60);
+    if (rl.limited) {
       return fail(-32002, "Rate limit exceeded: Tối đa 60 yêu cầu / phút / token.", 429);
     }
 

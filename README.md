@@ -51,25 +51,38 @@
 * Form của trang đã xuất bản gửi lead về `/api/leads?site={slug}`: lưu CRM và báo về Telegram đã cấu hình lúc xuất bản. Studio tự hiện thông báo khi có lead mới từ thiết bị khác.
 * Địa chỉ `localhost` chỉ mở được trên máy chạy Studio; cần triển khai lên máy chủ để quét QR bằng điện thoại.
 
-### 1.7. Giới Hạn Hiện Tại (MVP)
-* Dữ liệu lưu bằng file JSON trong `data/` (đã `.gitignore`); chưa có tài khoản, đăng nhập hay phân quyền, nên danh sách lead và MCP đang mở công khai. Chỉ chạy nội bộ hoặc demo.
-* Chưa có Docker sandbox, Caddy on-demand TLS, tên miền riêng, thanh toán: các phần này nằm trong `tai_lieu_dac_ta.md` như lộ trình.
+### 1.7. Hạ Tầng Sản Phẩm Thực Tế (Đã Nâng Cấp Sau MVP)
+* **Lưu trữ đa tầng (Prisma PostgreSQL + JSON Fallback):** Hỗ trợ đầy đủ lược đồ PostgreSQL (`prisma/schema.prisma`) cho `User`, `Project`, `ProjectVersion`, `PublishedSite`, `Lead`, `Integration`, `ApiToken`, `AnalyticsEvent`, `ModerationFlag`, `Subscription`, `BillingOrder`, kèm kịch bản nhập dữ liệu `scripts/import-json.ts`.
+* **Đăng nhập & Đa người dùng (`/login`):** Hỗ trợ Google, Email và chế độ **Demo Mode 1-Click** cho Ban Giám Khảo.
+* **Bảo mật MCP & Telegram:** API Token chuẩn `p2s_...` băm SHA-256 (60 req/phút), mã hóa AES-256-GCM cho Bot Token phía máy chủ và Content-Security-Policy (CSP) cho trang `/s/[slug]`.
 
-## 2. Hướng Dẫn Chạy Sản Phẩm
+## 2. Hướng Dẫn Chạy Cục Bộ & Triển Khai Lên Internet (Vercel / Railway)
 
 ### Bước 1: Mở terminal tại thư mục `mvp`
 ```bash
 cd d:\Thu_muc_C\LandingPage_Builder_Project\mvp
 npm install
+cp .env.example .env.local
 ```
 
-### Bước 2: Khởi động máy chủ Next.js
+### Bước 2: Khởi tạo cơ sở dữ liệu (Tùy chọn nếu dùng PostgreSQL)
+```bash
+npx prisma generate
+npx prisma migrate dev --name init
+# Nhập dữ liệu JSON cũ vào PostgreSQL (nếu cần):
+npx tsx scripts/import-json.ts
+```
+
+### Bước 3: Khởi động máy chủ Next.js
 ```bash
 npm run dev
 ```
-
-### Bước 3: Trải nghiệm tại trình duyệt
 Mở trình duyệt truy cập: **[http://localhost:3000](http://localhost:3000)**
+
+### Bước 4: Triển khai lên Vercel để quét QR trên điện thoại
+1. Đẩy mã nguồn lên GitHub và import kho vào **Vercel** (chọn Root Directory là `mvp`).
+2. Khai báo các biến môi trường trong `.env.example` (`DATABASE_URL`, `AUTH_SECRET`, `ENCRYPTION_KEY`, `DEMO_MODE=true`, `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`).
+3. Bấm **Deploy** — mã QR tạo từ nút **Xuất bản** sẽ dùng tên miền HTTPS công khai, quét được ngay bằng 4G trên mọi điện thoại.
 
 ---
 

@@ -3,17 +3,7 @@ import { sendTelegramNotification } from "@/lib/telegram";
 import { addLead, getLeads, getProjectIntegration, getPublished, getSite } from "@/lib/store";
 import { decryptSecret } from "@/lib/crypto";
 import { getCurrentUser } from "@/lib/auth";
-
-// Giới hạn tần suất đơn giản theo IP (đủ cho MVP; production dùng Upstash Redis qua ratelimit.ts).
-const hits = new Map<string, number[]>();
-function rateLimited(ip: string): boolean {
-  const now = Date.now();
-  const recent = (hits.get(ip) || []).filter((t) => now - t < 60_000);
-  recent.push(now);
-  hits.set(ip, recent);
-  if (hits.size > 5000) hits.clear();
-  return recent.length > 10;
-}
+import { checkRateLimit } from "@/lib/ratelimit";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -30,7 +20,8 @@ const PHONE_RE = /^(\+84|0)\d{9,10}$/;
 export async function POST(req: Request) {
   try {
     const ip = req.headers.get("x-forwarded-for")?.split(",")[0].trim() || "local";
-    if (rateLimited(ip)) {
+    const rl = await checkRateLimit(`leads:${ip}`, 10, 60);
+    if (rl.limited) {
       return NextResponse.json({ error: "Bạn gửi quá nhanh, vui lòng thử lại sau ít phút." }, { status: 429, headers: CORS });
     }
 
