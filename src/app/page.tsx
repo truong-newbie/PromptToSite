@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
+import Link from "next/link";
 import {
   Sparkles,
   Smartphone,
@@ -28,6 +29,7 @@ import {
   Save,
   Server,
   Zap,
+  Award,
 } from "lucide-react";
 import JSZip from "jszip";
 import { saveAs } from "file-saver";
@@ -341,8 +343,18 @@ export default function StudioPage() {
           </button>
         </div>
 
-        {/* Action Buttons: Export ZIP & 1-Click Publish */}
+        {/* Action Buttons: Showcase, Export ZIP & 1-Click Publish */}
         <div className="flex items-center gap-2">
+          <Link
+            href="/showcase"
+            className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-300 hover:border-amber-400 text-amber-800 hover:text-amber-900 text-xs font-bold flex items-center gap-1.5 transition shadow-sm"
+            title="Xem trang giới thiệu đề án & tầm nhìn tương lai dành cho Ban Giám Khảo"
+          >
+            <Award className="w-3.5 h-3.5 text-amber-600" />
+            <span className="hidden sm:inline">Giới Thiệu Đề Án (BGK)</span>
+            <span className="sm:hidden">Đề Án</span>
+          </Link>
+
           <button
             onClick={handleExportZip}
             className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold flex items-center gap-1.5 transition shadow-sm"
